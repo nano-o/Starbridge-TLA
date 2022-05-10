@@ -65,10 +65,10 @@ Sum(xs, acc) ==
     }
     process (sendToStellar \in User)
         variables
-            request = <<>>, \* the request made to the bridge
+            request = <<>>, \* the request made to the bridge 
     {
     \* a user on Ethereum wants to transfer assets to Stellar
-l0:     with (txId \in EthTxId \ usedEthTxIds) \* pick a fresh tx id
+l0:     with (txId \in EthTxId \ usedEthTxIds)
         with (amount \in 1..MaxAmount)
         with (srcAddr \in EthAddr \ {BridgeEthAddr}) {
             usedEthTxIds := usedEthTxIds \union {txId};
@@ -213,5 +213,5 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Mon May 09 20:05:37 PDT 2022 by nano
+\* Last modified Mon May 09 20:04:22 PDT 2022 by nano
 \* Created Mon Apr 11 15:36:08 PDT 2022 by nano
