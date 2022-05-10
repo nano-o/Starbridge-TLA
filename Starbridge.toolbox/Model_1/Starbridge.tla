@@ -27,7 +27,7 @@ CorrespondingStellarTxId(request) ==
 CorrespondingStellarTx(request) == [
     id |-> CorrespondingStellarTxId(request),
     from |-> BridgeStellarAddr,
-    to |-> request.to, 
+    to |-> request.to,
     amount |-> request.amount]
     
 RECURSIVE Sum(_,_)
@@ -42,8 +42,11 @@ Sum(xs, acc) ==
 --algorithm EthToStellar {
     variables
         usedEthTxIds = {},
-        ethChain = {}, \* should be a list, but a set is simpler and we don't care about the order of transactions
-        requests = [v \in Validator |-> {}], \* requests sent to validators
+        \* the state of the Ethereum blockchain:
+        ethChain = {}, \* it's a set because we don't care about the order for now
+        \* the state of the Stellar blockchain:
+        stellarChain = {}, \* it's a set because we don't care about the order for now
+        requests = [v \in Validator |-> {}], \* requests sent to bridge validators
         signatures = <<>>, \* map from Stellar transaction ID to validator that signed it
     define {
         TotalAmount(txs) == 
@@ -53,7 +56,7 @@ Sum(xs, acc) ==
             LET txs == {tx \in ethChain : tx.to = BridgeEthAddr}
             IN  TotalAmount(txs)
         BridgeStellarBalance ==
-            LET txs == {tx \in DOMAIN signatures : Cardinality(signatures[tx]) >= Threshold}
+            LET txs == {tx \in stellarChain : tx.to = BridgeStellarAddr}
             IN TotalAmount(txs)
         TypeInvariant ==
             /\ \A v \in Validator :
@@ -65,10 +68,10 @@ Sum(xs, acc) ==
     }
     process (sendToStellar \in User)
         variables
-            request = <<>>, \* the request made to the bridge 
+            request = <<>>, \* the request made to the bridge
     {
     \* a user on Ethereum wants to transfer assets to Stellar
-l0:     with (txId \in EthTxId \ usedEthTxIds)
+l0:     with (txId \in EthTxId \ usedEthTxIds) \* pick a fresh tx id
         with (amount \in 1..MaxAmount)
         with (srcAddr \in EthAddr \ {BridgeEthAddr}) {
             usedEthTxIds := usedEthTxIds \union {txId};
@@ -78,10 +81,12 @@ l0:     with (txId \in EthTxId \ usedEthTxIds)
             request := [id |-> txId, amount |-> amount, to |-> to];
             requests := [v \in Validator |-> requests[v] \union {request}]; \* send a request to all the bridge validators
         };
-l1:     with (stellarTx = CorrespondingStellarTx(request))
-        await \* wait for enough bridge validator to sign the corresponding stellar transaction
-            /\  stellarTx \in DOMAIN signatures
-            /\  Cardinality(signatures[stellarTx]) >= Threshold
+l1:     with (stellarTx = CorrespondingStellarTx(request)) {
+            await \* wait for enough bridge validators to sign the corresponding stellar transaction
+                /\  stellarTx \in DOMAIN signatures
+                /\  Cardinality(signatures[stellarTx]) >= Threshold;
+            stellarChain := stellarChain \union {stellarTx} \* tx is executed on Stellar
+        }
     }
     process (validator \in Validator) {
 l0:     while (TRUE) {
@@ -113,9 +118,9 @@ l0:     while (TRUE) {
     }
 }
 *)
-\* BEGIN TRANSLATION (chksum(pcal) = "b4b3943c" /\ chksum(tla) = "7b4a8bcd")
-\* Label l0 of process sendToStellar at line 71 col 14 changed to l0_
-VARIABLES usedEthTxIds, ethChain, requests, signatures, pc
+\* BEGIN TRANSLATION (chksum(pcal) = "4ef49d6" /\ chksum(tla) = "c9c81dd6")
+\* Label l0 of process sendToStellar at line 74 col 14 changed to l0_
+VARIABLES usedEthTxIds, ethChain, stellarChain, requests, signatures, pc
 
 (* define statement *)
 TotalAmount(txs) ==
@@ -125,7 +130,7 @@ BridgeEthBalance ==
     LET txs == {tx \in ethChain : tx.to = BridgeEthAddr}
     IN  TotalAmount(txs)
 BridgeStellarBalance ==
-    LET txs == {tx \in DOMAIN signatures : Cardinality(signatures[tx]) >= Threshold}
+    LET txs == {tx \in stellarChain : tx.to = BridgeStellarAddr}
     IN TotalAmount(txs)
 TypeInvariant ==
     /\ \A v \in Validator :
@@ -137,13 +142,15 @@ BalanceInvariant == BridgeEthBalance >= BridgeStellarBalance
 
 VARIABLE request
 
-vars == << usedEthTxIds, ethChain, requests, signatures, pc, request >>
+vars == << usedEthTxIds, ethChain, stellarChain, requests, signatures, pc, 
+           request >>
 
 ProcSet == (User) \cup (Validator)
 
 Init == (* Global variables *)
         /\ usedEthTxIds = {}
         /\ ethChain = {}
+        /\ stellarChain = {}
         /\ requests = [v \in Validator |-> {}]
         /\ signatures = <<>>
         (* Process sendToStellar *)
@@ -162,12 +169,13 @@ l0_(self) == /\ pc[self] = "l0_"
                            request' = [request EXCEPT ![self] = [id |-> txId, amount |-> amount, to |-> to]]
                       /\ requests' = [v \in Validator |-> requests[v] \union {request'[self]}]
              /\ pc' = [pc EXCEPT ![self] = "l1"]
-             /\ UNCHANGED signatures
+             /\ UNCHANGED << stellarChain, signatures >>
 
 l1(self) == /\ pc[self] = "l1"
             /\ LET stellarTx == CorrespondingStellarTx(request[self]) IN
-                 /\  stellarTx \in DOMAIN signatures
-                 /\  Cardinality(signatures[stellarTx]) >= Threshold
+                 /\ /\  stellarTx \in DOMAIN signatures
+                    /\  Cardinality(signatures[stellarTx]) >= Threshold
+                 /\ stellarChain' = (stellarChain \union {stellarTx})
             /\ pc' = [pc EXCEPT ![self] = "Done"]
             /\ UNCHANGED << usedEthTxIds, ethChain, requests, signatures, 
                             request >>
@@ -193,7 +201,7 @@ l0(self) == /\ pc[self] = "l0"
                \/ /\ \A u \in User : pc[u] = "Done"
                   /\ pc' = [pc EXCEPT ![self] = "Done"]
                   /\ UNCHANGED <<requests, signatures>>
-            /\ UNCHANGED << usedEthTxIds, ethChain, request >>
+            /\ UNCHANGED << usedEthTxIds, ethChain, stellarChain, request >>
 
 validator(self) == l0(self)
 
@@ -213,5 +221,5 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Mon May 09 20:04:22 PDT 2022 by nano
+\* Last modified Mon May 09 20:26:17 PDT 2022 by nano
 \* Created Mon Apr 11 15:36:08 PDT 2022 by nano
