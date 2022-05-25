@@ -3,14 +3,17 @@
 EXTENDS Integers
 
 \* @typeAlias: STELLAR_TX = [from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int];
-\* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, h : HASH];
+\* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, hash : HASH];
 
 StellarAccountId == {"1_OF_STELLAR_ACCNT","2_OF_STELLAR_ACCNT"}
 EthereumAccountId == {"1_OF_ETH_ACCNT","2_OF_ETH_ACCNT"}
-Amount == 0..2
+Amount == 0..1
 SeqNum == 0..2
-Time == 0..2
-Hash == {"0_OF_HASH","1_OF_HASH","2_OF_HASH"}
+Time == 0..4
+Hash == {"0_OF_HASH","1_OF_HASH"}
+
+BridgeStellarAccountId == "1_OF_STELLAR_ACCNT"
+BridgeEthereumAccountId == "1_OF_ETH_ACCNT"
 
 VARIABLES
     \* state of Stellar and Ethereum:
@@ -28,13 +31,15 @@ VARIABLES
     ethereumBalance,
     \* @type: Set(ETH_TX);
     ethereumMempool,
-    \* @type: Set(ETH_TX);
+    \* @type: Int -> Set(ETH_TX);
     ethereumExecuted,
     \* @type: Set(HASH);
     ethereumUsedHashes,
-    \* @type: HASH -> Bool;
+    \* @type: Int;
+    ethereumTime,
 
     \* state of the bridge:
+    \* @type: HASH -> Bool;
     bridgeHasLastTx,
     \* @type: HASH -> STELLAR_TX;
     bridgeLastTx,
@@ -44,10 +49,10 @@ VARIABLES
     bridgeStellarSeqNum,
     \* @type: Set(STELLAR_TX);
     bridgeStellarExecuted,
-    \* @type: Set(ETH_TX);
+    \* @type: Int -> Set(ETH_TX);
     bridgeEthereumExecuted
 
-ethereumVars == <<ethereumBalance, ethereumMempool, ethereumExecuted, ethereumUsedHashes>>
+ethereumVars == <<ethereumBalance, ethereumMempool, ethereumExecuted, ethereumUsedHashes, ethereumTime>>
 stellarVars == <<stellarBalance, stellarSeqNum, stellarTime, stellarMempool, stellarExecuted>>
 bridgeVars == <<bridgeHasLastTx, bridgeLastTx, bridgeStellarLedgerTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted>>
 
@@ -64,7 +69,8 @@ Ethereum == INSTANCE Ethereum WITH
     balance <- ethereumBalance,
     mempool <- ethereumMempool,
     executed <- ethereumExecuted,
-    usedHashes <- ethereumUsedHashes
+    usedHashes <- ethereumUsedHashes,
+    time <- ethereumTime
 
 Init ==
     /\  bridgeHasLastTx = [h \in Hash |-> FALSE]
@@ -72,7 +78,7 @@ Init ==
     /\  bridgeStellarLedgerTime = 0
     /\  bridgeStellarSeqNum = [a \in StellarAccountId |-> 0]
     /\  bridgeStellarExecuted = {}
-    /\  bridgeEthereumExecuted = {}
+    /\  bridgeEthereumExecuted = [t \in Time |-> {}]
     /\  Stellar!Init /\ Ethereum!Init
 
 TypeOkay ==
@@ -80,6 +86,8 @@ TypeOkay ==
     /\  bridgeLastTx \in [Hash -> Stellar!Transaction]
     /\  bridgeStellarLedgerTime \in Time
     /\  bridgeStellarSeqNum \in [StellarAccountId -> SeqNum]
+    /\  bridgeStellarExecuted \in SUBSET Stellar!Transaction
+    /\  bridgeEthereumExecuted \in [Time -> SUBSET Ethereum!Transaction]
     /\  Stellar!TypeOkay /\ Ethereum!TypeOkay
 
 SyncWithStellar ==
@@ -88,18 +96,32 @@ SyncWithStellar ==
     /\  bridgeStellarExecuted' = stellarExecuted
     /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeEthereumExecuted>>
 
+SyncWithEthereum ==
+    /\  bridgeEthereumExecuted' = ethereumExecuted
+    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeStellarExecuted, bridgeStellarSeqNum, bridgeStellarLedgerTime>>
+
 Next ==
     \/  SyncWithStellar
+    \/  SyncWithEthereum
     \/
-      \* private stellar transitions:
+      \* internal stellar transitions:
       /\ UNCHANGED <<ethereumVars, bridgeVars>>
       /\
            \/  Stellar!Tick
            \/  Stellar!ExecuteTx
     \/
-      \* private ethereum transitions:
+      \* internal ethereum transitions:
       /\ UNCHANGED <<stellarVars, bridgeVars>>
-      /\
-           \/  Ethereum!ExecuteTx
+      /\ \/ Ethereum!ExecuteTx
+         \/ Ethereum!Tick
+    \/
+      \* a client initiates a transfer on Ethereum:
+      /\ UNCHANGED <<stellarVars, bridgeVars>>
+      /\ \E src \in EthereumAccountId \ {BridgeEthereumAccountId},
+              x \in Amount \ {0}, h \in Hash :
+           LET tx == [from |-> src, to |-> BridgeEthereumAccountId, amount |-> x, hash |-> h]
+           IN  Ethereum!ReceiveTx(tx)
 
+Inv == Ethereum!Inv
+Inv_ == TypeOkay /\ Inv
 =============================================================================

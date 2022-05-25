@@ -31,8 +31,8 @@ Init ==
 
 Tick  ==
     /\  time' = time + 1
-    /\  time' \in Time
     /\  UNCHANGED <<balance, seqNum, mempool, executed>>
+    /\  time' \in Time
 
 ReceiveTx ==
     /\  \E a1 \in AccountId, a2 \in AccountId, x \in Amount, s \in SeqNum, t \in Time :
@@ -51,6 +51,8 @@ ExecuteTx == \E tx \in mempool :
     /\  mempool' = mempool \ {tx}
     /\  executed' = executed \union {tx}
     /\  UNCHANGED time
+    /\  balance'[tx.to] \in Amount
+    /\  seqNum'[tx.from] \in SeqNum
 
 TypeOkay ==
     /\  balance \in [AccountId -> Amount]
