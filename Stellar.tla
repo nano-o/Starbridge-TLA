@@ -19,6 +19,9 @@ VARIABLES
     mempool, \* pending mempool; that's the interface to the outer world
     executed \* executed transactions
 
+\* balance is a private variable
+\* mempool, executed, time, and seqNum are interface variables
+
 Init ==
     /\  balance = [a \in AccountId |-> 0]
     /\  seqNum = [a \in AccountId |-> 0]

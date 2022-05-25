@@ -13,6 +13,7 @@ Time == 0..2
 Hash == {"0_OF_HASH","1_OF_HASH","2_OF_HASH"}
 
 VARIABLES
+    \* state of Stellar and Ethereum:
     \* @type: STELLAR_ACCNT -> Int;
     stellarBalance,
     \* @type: STELLAR_ACCNT -> Int;
@@ -32,13 +33,23 @@ VARIABLES
     \* @type: Set(HASH);
     ethereumUsedHashes,
     \* @type: HASH -> Bool;
+
+    \* state of the bridge:
     bridgeHasLastTx,
     \* @type: HASH -> STELLAR_TX;
     bridgeLastTx,
     \* @type: Int;
     bridgeStellarLedgerTime,
     \* @type: STELLAR_ACCNT -> Int;
-    bridgeStellarSeqNum
+    bridgeStellarSeqNum,
+    \* @type: Set(STELLAR_TX);
+    bridgeStellarExecuted,
+    \* @type: Set(ETH_TX);
+    bridgeEthereumExecuted
+
+ethereumVars == <<ethereumBalance, ethereumMempool, ethereumExecuted, ethereumUsedHashes>>
+stellarVars == <<stellarBalance, stellarSeqNum, stellarTime, stellarMempool, stellarExecuted>>
+bridgeVars == <<bridgeHasLastTx, bridgeLastTx, bridgeStellarLedgerTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted>>
 
 Stellar == INSTANCE Stellar WITH
     AccountId <- StellarAccountId,
@@ -55,14 +66,40 @@ Ethereum == INSTANCE Ethereum WITH
     executed <- ethereumExecuted,
     usedHashes <- ethereumUsedHashes
 
-Bridge == INSTANCE Bridge WITH
-    EthereumTransaction <- Ethereum!Transaction,
-    StellarTransaction <- Stellar!Transaction,
-    hasLastTx <- bridgeHasLastTx,
-    lastTx <- bridgeLastTx,
-    stellarLedgerTime <- bridgeStellarLedgerTime,
-    stellarSeqNum <- bridgeStellarSeqNum
+Init ==
+    /\  bridgeHasLastTx = [h \in Hash |-> FALSE]
+    /\  bridgeLastTx = [h \in Hash |-> CHOOSE tx \in Stellar!Transaction : TRUE]
+    /\  bridgeStellarLedgerTime = 0
+    /\  bridgeStellarSeqNum = [a \in StellarAccountId |-> 0]
+    /\  bridgeStellarExecuted = {}
+    /\  bridgeEthereumExecuted = {}
+    /\  Stellar!Init /\ Ethereum!Init
 
-Init == Stellar!Init /\ Ethereum!Init /\ Bridge!Init
+TypeOkay ==
+    /\  bridgeHasLastTx \in [Hash -> BOOLEAN]
+    /\  bridgeLastTx \in [Hash -> Stellar!Transaction]
+    /\  bridgeStellarLedgerTime \in Time
+    /\  bridgeStellarSeqNum \in [StellarAccountId -> SeqNum]
+    /\  Stellar!TypeOkay /\ Ethereum!TypeOkay
+
+SyncWithStellar ==
+    /\  bridgeStellarLedgerTime' = stellarTime
+    /\  bridgeStellarSeqNum' = stellarSeqNum
+    /\  bridgeStellarExecuted' = stellarExecuted
+    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeEthereumExecuted>>
+
+Next ==
+    \/  SyncWithStellar
+    \/
+      \* private stellar transitions:
+      /\ UNCHANGED <<ethereumVars, bridgeVars>>
+      /\
+           \/  Stellar!Tick
+           \/  Stellar!ExecuteTx
+    \/
+      \* private ethereum transitions:
+      /\ UNCHANGED <<stellarVars, bridgeVars>>
+      /\
+           \/  Ethereum!ExecuteTx
 
 =============================================================================
