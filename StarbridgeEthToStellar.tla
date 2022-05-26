@@ -1,6 +1,7 @@
 ------------------------------ MODULE StarbridgeEthToStellar ------------------------------
 
 \* TODO ideally, we would have a separate bridge module in which the private variables of the Stellar and Ethereum modules are not in scope
+\* TODO SyncWithEthereum no really needed
 
 EXTENDS Integers, Apalache
 
@@ -35,8 +36,7 @@ VARIABLES
     \* state of the bridge:
     \* @type: Set(ETH_TX);
     bridgeIssuedWithdrawTx,
-    \* TODO use a partial function for this? This type makes things slow:
-    \* @type: Set(<<ETH_TX, STELLAR_TX>>);
+    \* @type: ETH_TX -> STELLAR_TX;
     bridgeLastWithdrawTx,
     \* @type: Int;
     bridgeStellarTime,
@@ -69,7 +69,7 @@ Ethereum == INSTANCE Ethereum WITH
 
 Init ==
     /\  bridgeIssuedWithdrawTx = {}
-    /\  bridgeLastWithdrawTx = {}
+    /\  bridgeLastWithdrawTx = [tx \in Ethereum!Transaction |-> CHOOSE tx_ \in Stellar!Transaction : TRUE]
     /\  bridgeStellarTime = 0
     /\  bridgeStellarSeqNum = [a \in StellarAccountId |-> 0]
     /\  bridgeStellarExecuted = {}
@@ -79,7 +79,7 @@ Init ==
 
 TypeOkay ==
     /\  bridgeIssuedWithdrawTx \in SUBSET Ethereum!Transaction
-    /\  bridgeLastWithdrawTx \in SUBSET (Ethereum!Transaction \times Stellar!Transaction)
+    /\  bridgeLastWithdrawTx \in [Ethereum!Transaction -> Stellar!Transaction]
     /\  bridgeStellarTime \in Time
     /\  bridgeStellarSeqNum \in [StellarAccountId -> SeqNum]
     /\  bridgeStellarExecuted \in SUBSET Stellar!Transaction
@@ -101,16 +101,12 @@ SyncWithEthereum ==
 \* @type: (STELLAR_TX) => Bool;
 IrrevocablyInvalid(tx) ==
   \/  tx.maxTime < bridgeStellarTime
-  \/  tx.seq < bridgeStellarSeqNum[tx.from]
+  \/  tx.seq < bridgeStellarSeqNum[tx.src]
 
 BridgeEthereumExecuted == UNION {bridgeEthereumExecuted[t] : t \in Time}
 
 \* timestamp of a transaction on Ethereum as seen by the bridge
 TxTime(tx) == CHOOSE t \in Time : tx \in bridgeEthereumExecuted[t]
-
-LastWithdrawTx(tx) ==
-  CHOOSE withdrawTx \in Stellar!Transaction :
-    <<tx, withdrawTx>> \in bridgeLastWithdrawTx
 
 \* The bridge signs a new withdraw transaction when:
 \* It never did so before for the same hash,
@@ -120,15 +116,17 @@ LastWithdrawTx(tx) ==
 \* Initially it can be the time of the tx as recorded on ethereum, but what is it afterwards?
 \* For now, we use previousTx.maxTime+WithdrawWindow
 SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
-  /\  \neg tx \in bridgeRefunded
+  \* TODO weird: Apalache finds a counter-example without the following line, but not TLC
+  /\  tx.to = BridgeEthereumAccountId
+  /\  tx \notin bridgeRefunded
   /\  tx \in bridgeIssuedWithdrawTx
-      => /\ \neg LastWithdrawTx(tx) \in bridgeStellarExecuted
-         /\ IrrevocablyInvalid(LastWithdrawTx(tx))
+      => /\ \neg bridgeLastWithdrawTx[tx] \in bridgeStellarExecuted
+         /\ IrrevocablyInvalid(bridgeLastWithdrawTx[tx])
   /\ \E seqNum \in SeqNum  : \* chosen by the client
       LET timeBound ==
             IF \neg tx \in bridgeIssuedWithdrawTx
               THEN TxTime(tx)+WithdrawWindow
-              ELSE LastWithdrawTx(tx).time+WithdrawWindow
+              ELSE bridgeLastWithdrawTx[tx].maxTime+WithdrawWindow
           withdrawTx == [
             src |-> tx.memo,
             from |-> BridgeStellarAccountId,
@@ -140,18 +138,19 @@ SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
         /\ timeBound \in Time \* for the model-checker
         /\ Stellar!ReceiveTx(withdrawTx)
         /\ bridgeIssuedWithdrawTx' = bridgeIssuedWithdrawTx \union {tx}
-        /\ bridgeLastWithdrawTx' = bridgeLastWithdrawTx \union {<<tx, withdrawTx>>}
+        /\ bridgeLastWithdrawTx' = [bridgeLastWithdrawTx EXCEPT ![tx] = withdrawTx]
   /\  UNCHANGED <<ethereumVars, bridgeChainsStateVars, bridgeRefunded>>
 
 SignRefundTransaction == \E tx \in BridgeEthereumExecuted :
-  /\  tx \in bridgeIssuedWithdrawTx
-  /\  IrrevocablyInvalid(LastWithdrawTx(tx))
-  /\  \neg tx \in bridgeRefunded
+  /\  tx \in bridgeIssuedWithdrawTx =>
+      /\  bridgeLastWithdrawTx[tx] \notin bridgeStellarExecuted
+      /\  IrrevocablyInvalid(bridgeLastWithdrawTx[tx])
+      /\  \neg tx \in bridgeRefunded
   /\  LET refundTx == [
         from |-> BridgeEthereumAccountId,
         to |-> tx.from,
         amount |-> tx.amount,
-        memo |-> LastWithdrawTx(tx).to] \* memo is arbitrary
+        memo |-> bridgeLastWithdrawTx[tx].to] \* memo is arbitrary
       IN
         Ethereum!ExecuteTx(refundTx)
   /\  bridgeRefunded' = bridgeRefunded \union {tx}

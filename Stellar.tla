@@ -37,7 +37,7 @@ ReceiveTx(tx) ==
 
 ExecuteTx == \E tx \in mempool :
     /\  tx.seq = seqNum[tx.src]
-    /\  tx.maxTime <= time
+    /\  time <= tx.maxTime
     /\  tx.amount >= 0
     /\  tx.from # tx.to
     /\  seqNum' = [seqNum EXCEPT ![tx.src] = @+1]
