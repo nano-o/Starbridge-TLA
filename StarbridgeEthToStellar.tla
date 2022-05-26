@@ -3,7 +3,7 @@
 \* TODO ideally, we would have a separate bridge module in which the private variables of the Stellar and Ethereum modules are not in scope
 \* TODO SyncWithEthereum no really needed
 
-EXTENDS Integers, Apalache
+EXTENDS Integers, Apalache, FiniteSets, TLC
 
 \* @typeAlias: STELLAR_TX = [src : STELLAR_ACCNT, from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int];
 \* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, memo : STELLAR_ACCNT];
@@ -69,7 +69,8 @@ Ethereum == INSTANCE Ethereum WITH
 
 Init ==
     /\  bridgeIssuedWithdrawTx = {}
-    /\  bridgeLastWithdrawTx = [tx \in Ethereum!Transaction |-> CHOOSE tx_ \in Stellar!Transaction : TRUE]
+    (* /\  bridgeLastWithdrawTx = [tx \in Ethereum!Transaction |-> CHOOSE tx_ \in Stellar!Transaction : TRUE] *)
+    /\  bridgeLastWithdrawTx \in [Ethereum!Transaction -> Stellar!Transaction]
     /\  bridgeStellarTime = 0
     /\  bridgeStellarSeqNum = [a \in StellarAccountId |-> 0]
     /\  bridgeStellarExecuted = {}
@@ -116,7 +117,6 @@ TxTime(tx) == CHOOSE t \in Time : tx \in bridgeEthereumExecuted[t]
 \* Initially it can be the time of the tx as recorded on ethereum, but what is it afterwards?
 \* For now, we use previousTx.maxTime+WithdrawWindow
 SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
-  \* TODO weird: Apalache finds a counter-example without the following line, but not TLC
   /\  tx.to = BridgeEthereumAccountId
   /\  tx \notin bridgeRefunded
   /\  tx \in bridgeIssuedWithdrawTx
@@ -150,7 +150,7 @@ SignRefundTransaction == \E tx \in BridgeEthereumExecuted :
         from |-> BridgeEthereumAccountId,
         to |-> tx.from,
         amount |-> tx.amount,
-        memo |-> bridgeLastWithdrawTx[tx].to] \* memo is arbitrary
+        memo |-> BridgeStellarAccountId] \* memo is arbitrary
       IN
         Ethereum!ExecuteTx(refundTx)
   /\  bridgeRefunded' = bridgeRefunded \union {tx}
@@ -201,7 +201,14 @@ StellarWithdrawals ==
     ApaFoldSet(Step, 0, stellarExecuted)
 
 Inv1 == \A tx \in Ethereum!Transaction :
-  tx \in bridgeRefunded => tx \in Ethereum!Executed
+  tx \in bridgeRefunded =>
+    LET inverse == [
+      from |-> BridgeEthereumAccountId,
+      to |-> tx.from,
+      amount |-> tx.amount,
+      memo |-> BridgeStellarAccountId ]
+    IN inverse \in Ethereum!Executed
+Inv1_ == TypeOkay /\ Inv1
 
 \* Funds deposited in the bridge account always exceed or are equal to the funds taken out:
 MainInvariant ==
@@ -210,5 +217,5 @@ MainInvariant_ ==
   /\ TypeOkay
   /\ Ethereum!Inv
   /\ EthBridgeBalance - StellarWithdrawals >= 0
-
+   /\ stellarTime = 0
 =============================================================================
