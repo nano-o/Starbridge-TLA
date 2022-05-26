@@ -7,9 +7,11 @@ CONSTANTS
     Amount,
     SeqNum,
     Time,
-    BridgeAccountId
+    BridgeAccountId,
+    Hash
 
-Transaction == [src : AccountId, from : AccountId, to : AccountId, amount : Amount, seq : SeqNum, maxTime : Time]
+Transaction == [src : AccountId, from : AccountId, to : AccountId, amount : Amount, seq : SeqNum, maxTime : Time, memo : Hash]
+\* memo contains the hash of the initiating transaction on Ethereum
 
 VARIABLES
     seqNum, \* a function mapping an account id to the account's sequence number

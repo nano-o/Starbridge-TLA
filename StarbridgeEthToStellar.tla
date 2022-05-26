@@ -4,15 +4,17 @@
 
 EXTENDS Integers, Apalache, FiniteSets, TLC
 
-\* @typeAlias: STELLAR_TX = [src : STELLAR_ACCNT, from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int];
-\* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, memo : STELLAR_ACCNT];
+\* @typeAlias: STELLAR_TX = [src : STELLAR_ACCNT, from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int, memo : HASH];
+\* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, data : STELLAR_ACCNT, hash : HASH];
 
 StellarAccountId == {"BRIDGE_OF_STELLAR_ACCNT","USER_OF_STELLAR_ACCNT"}
 EthereumAccountId == {"BRIDGE_OF_ETH_ACCNT","USER_OF_ETH_ACCNT"}
 Amount == 0..1
 SeqNum == 0..1
-Time == 0..2
+Time == 0..1
 WithdrawWindow == 1 \* time window the user has to execute a withdraw operation on Stellar
+(* Hash == {"0_OF_HASH","1_OF_HASH","2_OF_HASH","3_OF_HASH"} *)
+Hash == {"0_OF_HASH","1_OF_HASH"}
 
 BridgeStellarAccountId == "BRIDGE_OF_STELLAR_ACCNT"
 BridgeEthereumAccountId == "BRIDGE_OF_ETH_ACCNT"
@@ -33,9 +35,9 @@ VARIABLES
     ethereumTime,
 
     \* state of the bridge:
-    \* @type: Set(ETH_TX);
+    \* @type: Set(HASH);
     bridgeIssuedWithdrawTx,
-    \* @type: ETH_TX -> STELLAR_TX;
+    \* @type: HASH -> STELLAR_TX;
     bridgeLastWithdrawTx,
     \* @type: Int;
     bridgeStellarTime,
@@ -43,7 +45,7 @@ VARIABLES
     bridgeStellarSeqNum,
     \* @type: Set(STELLAR_TX);
     bridgeStellarExecuted,
-    \* @type: Set(ETH_TX);
+    \* @type: Set(HASH);
     bridgeRefunded
 
 ethereumVars == <<ethereumExecuted, ethereumTime>>
@@ -66,8 +68,7 @@ Ethereum == INSTANCE Ethereum WITH
 
 Init ==
     /\  bridgeIssuedWithdrawTx = {}
-    (* /\  bridgeLastWithdrawTx = [tx \in Ethereum!Transaction |-> CHOOSE tx_ \in Stellar!Transaction : TRUE] *)
-    /\  bridgeLastWithdrawTx \in [Ethereum!Transaction -> Stellar!Transaction]
+    /\  bridgeLastWithdrawTx \in [Hash -> Stellar!Transaction]
     /\  bridgeStellarTime = 0
     /\  bridgeStellarSeqNum = [a \in StellarAccountId |-> 0]
     /\  bridgeStellarExecuted = {}
@@ -75,12 +76,12 @@ Init ==
     /\  Stellar!Init /\ Ethereum!Init
 
 TypeOkay ==
-    /\  bridgeIssuedWithdrawTx \in SUBSET Ethereum!Transaction
-    /\  bridgeLastWithdrawTx \in [Ethereum!Transaction -> Stellar!Transaction]
+    /\  bridgeIssuedWithdrawTx \in SUBSET Hash
+    /\  bridgeLastWithdrawTx \in [Hash -> Stellar!Transaction]
     /\  bridgeStellarTime \in Time
     /\  bridgeStellarSeqNum \in [StellarAccountId -> SeqNum]
     /\  bridgeStellarExecuted \in SUBSET Stellar!Transaction
-    /\  bridgeRefunded \in SUBSET Ethereum!Transaction
+    /\  bridgeRefunded \in SUBSET Hash
     /\  Stellar!TypeOkay /\ Ethereum!TypeOkay
 
 SyncWithStellar ==
@@ -107,44 +108,47 @@ TxTime(tx) == CHOOSE t \in Time : tx \in ethereumExecuted[t]
 \* For now, we use previousTx.maxTime+WithdrawWindow
 SignWithdrawTransaction == \E tx \in Ethereum!Executed :
   /\  tx.to = BridgeEthereumAccountId
-  /\  tx \notin bridgeRefunded
-  /\  tx \in bridgeIssuedWithdrawTx
-      => /\ \neg bridgeLastWithdrawTx[tx] \in bridgeStellarExecuted
-         /\ IrrevocablyInvalid(bridgeLastWithdrawTx[tx])
+  /\  tx.hash \notin bridgeRefunded
+  /\  tx.hash \in bridgeIssuedWithdrawTx
+      => LET withdrawTx == bridgeLastWithdrawTx[tx.hash] IN
+           /\ \neg withdrawTx \in bridgeStellarExecuted
+           /\ IrrevocablyInvalid(withdrawTx)
   /\ \E seqNum \in SeqNum  : \* chosen by the client
       LET timeBound ==
-            IF \neg tx \in bridgeIssuedWithdrawTx
+            IF \neg tx.hash \in bridgeIssuedWithdrawTx
               THEN TxTime(tx)+WithdrawWindow
-              ELSE bridgeLastWithdrawTx[tx].maxTime+WithdrawWindow
+              ELSE bridgeLastWithdrawTx[tx.hash].maxTime+WithdrawWindow
           withdrawTx == [
-            src |-> tx.memo,
+            src |-> tx.data,
             from |-> BridgeStellarAccountId,
-            to |-> tx.memo,
+            to |-> tx.data,
             amount |-> tx.amount,
             seq |-> seqNum,
-            maxTime |-> timeBound]
+            maxTime |-> timeBound,
+            memo |-> tx.hash]
       IN
         /\ timeBound \in Time \* for the model-checker
         /\ Stellar!ReceiveTx(withdrawTx)
-        /\ bridgeIssuedWithdrawTx' = bridgeIssuedWithdrawTx \union {tx}
-        /\ bridgeLastWithdrawTx' = [bridgeLastWithdrawTx EXCEPT ![tx] = withdrawTx]
+        /\ bridgeIssuedWithdrawTx' = bridgeIssuedWithdrawTx \union {tx.hash}
+        /\ bridgeLastWithdrawTx' = [bridgeLastWithdrawTx EXCEPT ![tx.hash] = withdrawTx]
   /\  UNCHANGED <<ethereumVars, bridgeChainsStateVars, bridgeRefunded>>
 
-\* @type: ETH_TX => ETH_TX;
-RefundTx(tx) == [
+\* @type: (ETH_TX, HASH) => ETH_TX;
+RefundTx(tx, hash) == [
   from |-> BridgeEthereumAccountId,
   to |-> tx.from,
   amount |-> tx.amount,
-  memo |-> BridgeStellarAccountId ]
+  data |-> BridgeStellarAccountId,
+  hash |-> hash ]
 
 SignRefundTransaction == \E tx \in Ethereum!Executed :
-  /\  IF tx \in bridgeIssuedWithdrawTx
-      THEN
-        /\  bridgeLastWithdrawTx[tx] \notin bridgeStellarExecuted
-        /\  IrrevocablyInvalid(bridgeLastWithdrawTx[tx])
-        /\  \neg tx \in bridgeRefunded
-        /\  Ethereum!ExecuteTx(RefundTx(tx))
-        /\  bridgeRefunded' = bridgeRefunded \union {tx}
+  /\  IF tx.hash \in bridgeIssuedWithdrawTx
+      THEN LET withdrawTx == bridgeLastWithdrawTx[tx.hash] IN
+        /\  withdrawTx \notin bridgeStellarExecuted
+        /\  IrrevocablyInvalid(withdrawTx)
+        /\  tx.hash \notin bridgeRefunded
+        /\  \E hash \in Hash : Ethereum!ExecuteTx(RefundTx(tx, hash))
+        /\  bridgeRefunded' = bridgeRefunded \union {tx.hash}
       ELSE
         UNCHANGED <<ethereumVars, bridgeRefunded>>
   /\  UNCHANGED <<stellarVars, bridgeIssuedWithdrawTx, bridgeLastWithdrawTx, bridgeChainsStateVars>>
@@ -153,8 +157,9 @@ UserInitiates ==
   \* a client initiates a transfer on Ethereum:
   /\ UNCHANGED <<stellarVars, bridgeVars>>
   /\ \E src \in EthereumAccountId \ {BridgeEthereumAccountId},
-          x \in Amount \ {0}, dst \in StellarAccountId \ {BridgeStellarAccountId} :
-       LET tx == [from |-> src, to |-> BridgeEthereumAccountId, amount |-> x, memo |-> dst]
+          x \in Amount \ {0}, dst \in StellarAccountId \ {BridgeStellarAccountId},
+        hash \in Hash :
+       LET tx == [from |-> src, to |-> BridgeEthereumAccountId, amount |-> x, data |-> dst, hash |-> hash]
        IN  Ethereum!ExecuteTx(tx)
 
 Next ==
@@ -192,25 +197,23 @@ StellarWithdrawals ==
   IN
     ApaFoldSet(Step, 0, stellarExecuted)
 
-Inv1 == \A tx \in Ethereum!Transaction :
-  tx \in bridgeRefunded => RefundTx(tx) \in Ethereum!Executed
-Inv1_ == TypeOkay /\ Inv1
+Inv0 == Ethereum!Inv
+Inv0_ == TypeOkay /\ Inv0
 
-\* @type: (ETH_TX, STELLAR_TX) => Bool;
-IsInitiatingTx(tx, stellarTx) ==
-  /\  tx \in Ethereum!Executed
-  /\  tx.memo = stellarTx.src
-  /\  tx.to = BridgeEthereumAccountId
-  /\  tx.amount = stellarTx.amount
-
-InitiatingTx(stellarTx) ==
+TransactionFromHash(h) ==
   CHOOSE tx \in Ethereum!Executed :
-    IsInitiatingTx(tx, stellarTx)
+    tx.hash = h
+
+Inv1 == \A h \in Hash : h \in bridgeRefunded =>
+  \E tx \in Ethereum!Executed :
+    /\ tx.hash = h
+    /\ \E h2 \in Hash : RefundTx(tx, h2) \in Ethereum!Executed
+Inv1_ == TypeOkay /\ Inv0 /\ Inv1
 
 Inv2 == \A tx \in stellarMempool \union stellarExecuted :
   tx.from = BridgeStellarAccountId =>
     \E ethTx \in Ethereum!Executed:
-      IsInitiatingTx(ethTx, tx)
+      ethTx.hash = tx.memo
 Inv2_ == TypeOkay /\ Inv2
 
 (* Inv3 == \A tx \in stellarExecuted : *)
