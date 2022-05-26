@@ -6,9 +6,10 @@ CONSTANTS
     AccountId, \* the set of all account identifiers
     Amount,
     SeqNum,
-    Time
+    Time,
+    BridgeAccountId
 
-Transaction == [from : AccountId, to : AccountId, amount : Amount, seq : SeqNum, maxTime : Time]
+Transaction == [src : AccountId, from : AccountId, to : AccountId, amount : Amount, seq : SeqNum, maxTime : Time]
 
 VARIABLES
     balance, \* a function mapping an account id to the account's balance
@@ -22,7 +23,7 @@ VARIABLES
 
 Init ==
     /\  balance = [a \in AccountId |-> 0]
-    /\  seqNum = [a \in AccountId |-> 0]
+    /\  seqNum \in [AccountId -> SeqNum]
     /\  time = 0
     /\  mempool = {}
     /\  executed = {}
@@ -37,12 +38,13 @@ ReceiveTx(tx) ==
     /\  UNCHANGED <<time, balance, seqNum, executed>>
 
 ExecuteTx == \E tx \in mempool :
-    /\  tx.seq = seqNum[tx.from]
+    /\  tx.seq = seqNum[tx.src]
     /\  tx.maxTime <= time
     /\  tx.amount >= 0
     /\  tx.from # tx.to
-    /\  tx.amount <= balance[tx.from]
-    /\  seqNum' = [seqNum EXCEPT ![tx.from] = @+1]
+    /\  \/  tx.amount <= balance[tx.from]
+        \/  tx.from = BridgeAccountId \* the bridge is the asset issuer
+    /\  seqNum' = [seqNum EXCEPT ![tx.src] = @+1]
     /\  balance' = [balance EXCEPT ![tx.from] = @-tx.amount, ![tx.to] = @+tx.amount]
     /\  mempool' = mempool \ {tx}
     /\  executed' = executed \union {tx}

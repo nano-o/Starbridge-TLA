@@ -1,5 +1,8 @@
 ------------------------------ MODULE Ethereum ------------------------------
 
+\* TODO We don't need explicit balances
+\* TODO We don't need the mempool
+
 EXTENDS Integers
 
 CONSTANTS

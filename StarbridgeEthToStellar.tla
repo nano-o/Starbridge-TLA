@@ -1,17 +1,18 @@
 ------------------------------ MODULE StarbridgeEthToStellar ------------------------------
 
-\* TODO: ideally, we would have a separate bridge module in which the private variables of the Stellar and Ethereum modules are not in scope
+\* TODO ideally, we would have a separate bridge module in which the private variables of the Stellar and Ethereum modules are not in scope
+\* TODO we don't need to track balances
 
-EXTENDS Integers
+EXTENDS Integers, Apalache
 
-\* @typeAlias: STELLAR_TX = [from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int];
+\* @typeAlias: STELLAR_TX = [src : STELLAR_ACCNT, from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int];
 \* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, memo : STELLAR_ACCNT];
 
 StellarAccountId == {"1_OF_STELLAR_ACCNT","2_OF_STELLAR_ACCNT"}
 EthereumAccountId == {"1_OF_ETH_ACCNT","2_OF_ETH_ACCNT"}
-Amount == 0..1
+Amount == 0..3
 SeqNum == 0..2
-Time == 0..4
+Time == 0..2
 WithdrawWindow == 1 \* time window the user has to execute a withdraw operation on Stellar
 
 BridgeStellarAccountId == "1_OF_STELLAR_ACCNT"
@@ -61,6 +62,7 @@ bridgeChainsStateVars == <<bridgeStellarTime, bridgeStellarSeqNum, bridgeStellar
 
 Stellar == INSTANCE Stellar WITH
     AccountId <- StellarAccountId,
+    BridgeAccountId <- BridgeStellarAccountId,
     balance <- stellarBalance,
     seqNum <- stellarSeqNum,
     time <- stellarTime,
@@ -117,21 +119,23 @@ TxTime(tx) == CHOOSE t \in Time : tx \in bridgeEthereumExecuted[t]
 
 \* The bridge signs a new withdraw transaction when:
 \* It never did so before for the same hash,
-\* or the previous withdraw transaction is irrevocably invalid.
+\* or the previous withdraw transaction is irrevocably invalid and the withdraw transaction has not been executed.
 \* The transaction has a time bound set to WithdrawWindow ahead of the current time.
 \* But what is the current time?
 \* Initially it can be the time of the tx as recorded on ethereum, but what is it afterwards?
 \* For now, we use previousTx.maxTime+WithdrawWindow
 SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
   /\  \neg bridgeRefunded[tx]
-  /\  \/  \neg bridgeIssuedWithdrawTx[tx]
-      \/  IrrevocablyInvalid(bridgeLastWithdrawTx[tx])
+  /\  \/ \neg bridgeIssuedWithdrawTx[tx]
+      \/ /\ \neg bridgeLastWithdrawTx[tx] \in bridgeStellarExecuted
+         /\ IrrevocablyInvalid(bridgeLastWithdrawTx[tx])
   /\ \E seqNum \in SeqNum  : \* chosen by the client
       LET timeBound ==
             IF \neg bridgeIssuedWithdrawTx[tx]
               THEN TxTime(tx)+WithdrawWindow
               ELSE bridgeLastWithdrawTx[tx].time+WithdrawWindow
           withdrawTx == [
+            src |-> tx.memo,
             from |-> BridgeStellarAccountId,
             to |-> tx.memo,
             amount |-> tx.amount,
@@ -181,6 +185,36 @@ Next ==
       /\ \/ Ethereum!ExecuteTx
          \/ Ethereum!Tick
 
-Inv == Ethereum!Inv
-Inv_ == TypeOkay /\ Inv
+
+EthBridgeBalance == \* funds sent to the bridge on Ethereum minus refunds
+  LET
+    \* @type: (Int, ETH_TX) => Int;
+    Step(n, tx) ==
+      CASE
+            tx.to = BridgeEthereumAccountId -> n + tx.amount
+        []  tx.from = BridgeEthereumAccountId -> n - tx.amount
+        []  OTHER -> n
+  IN
+    ApaFoldSet(Step, 0, Ethereum!Executed)
+
+StellarWithdrawals ==
+  LET
+    \* @type: (Int, STELLAR_TX) => Int;
+    Step(n, tx) ==
+      IF tx.from = BridgeStellarAccountId
+      THEN n + tx.amount
+      ELSE n
+  IN
+    ApaFoldSet(Step, 0, stellarExecuted)
+
+Inv == TypeOkay /\ Ethereum!Inv
+
+\* Funds deposited in the bridge account always exceed or are equal to the funds taken out:
+MainInvariant ==
+  /\ EthBridgeBalance - StellarWithdrawals >= 0
+MainInvariant_ ==
+  /\ TypeOkay
+  /\ Ethereum!Inv
+  /\ EthBridgeBalance - StellarWithdrawals >= 0
+
 =============================================================================
