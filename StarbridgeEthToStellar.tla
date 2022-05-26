@@ -44,7 +44,7 @@ VARIABLES
     \* @type: HASH -> STELLAR_TX;
     bridgeLastTx,
     \* @type: Int;
-    bridgeStellarLedgerTime,
+    bridgeStellarTime,
     \* @type: STELLAR_ACCNT -> Int;
     bridgeStellarSeqNum,
     \* @type: Set(STELLAR_TX);
@@ -54,7 +54,7 @@ VARIABLES
 
 ethereumVars == <<ethereumBalance, ethereumMempool, ethereumExecuted, ethereumUsedHashes, ethereumTime>>
 stellarVars == <<stellarBalance, stellarSeqNum, stellarTime, stellarMempool, stellarExecuted>>
-bridgeVars == <<bridgeHasLastTx, bridgeLastTx, bridgeStellarLedgerTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted>>
+bridgeVars == <<bridgeHasLastTx, bridgeLastTx, bridgeStellarTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted>>
 
 Stellar == INSTANCE Stellar WITH
     AccountId <- StellarAccountId,
@@ -75,7 +75,7 @@ Ethereum == INSTANCE Ethereum WITH
 Init ==
     /\  bridgeHasLastTx = [h \in Hash |-> FALSE]
     /\  bridgeLastTx = [h \in Hash |-> CHOOSE tx \in Stellar!Transaction : TRUE]
-    /\  bridgeStellarLedgerTime = 0
+    /\  bridgeStellarTime = 0
     /\  bridgeStellarSeqNum = [a \in StellarAccountId |-> 0]
     /\  bridgeStellarExecuted = {}
     /\  bridgeEthereumExecuted = [t \in Time |-> {}]
@@ -84,21 +84,52 @@ Init ==
 TypeOkay ==
     /\  bridgeHasLastTx \in [Hash -> BOOLEAN]
     /\  bridgeLastTx \in [Hash -> Stellar!Transaction]
-    /\  bridgeStellarLedgerTime \in Time
+    /\  bridgeStellarTime \in Time
     /\  bridgeStellarSeqNum \in [StellarAccountId -> SeqNum]
     /\  bridgeStellarExecuted \in SUBSET Stellar!Transaction
     /\  bridgeEthereumExecuted \in [Time -> SUBSET Ethereum!Transaction]
     /\  Stellar!TypeOkay /\ Ethereum!TypeOkay
 
 SyncWithStellar ==
-    /\  bridgeStellarLedgerTime' = stellarTime
+    /\  bridgeStellarTime' = stellarTime
     /\  bridgeStellarSeqNum' = stellarSeqNum
     /\  bridgeStellarExecuted' = stellarExecuted
     /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeEthereumExecuted>>
 
 SyncWithEthereum ==
     /\  bridgeEthereumExecuted' = ethereumExecuted
-    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeStellarExecuted, bridgeStellarSeqNum, bridgeStellarLedgerTime>>
+    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeStellarExecuted, bridgeStellarSeqNum, bridgeStellarTime>>
+
+\* A withdraw transaction is irrevocably invalid when its time bound has ellapsed or the sequence number of the receiving account is higher than the transaction's sequence number
+\* @type: (STELLAR_TX) => Bool;
+IrrevocablyInvalid(tx) ==
+  \/  tx.maxTime < bridgeStellarTime
+  \/  tx.seq < bridgeStellarSeqNum[tx.from]
+
+BridgeEthereumExecuted == UNION {bridgeEthereumExecuted[t] : t \in Time}
+
+\* timestamp of a transaction on Ethereum as seen by the bridge
+TxTime(tx) == CHOOSE t \in Time : tx \in bridgeEthereumExecuted[t]
+
+\* The bridge signs a new withdraw transaction when:
+\* It never did so before for the same hash,
+\* or the previous withdraw transaction is irrevocably invalid.
+\* The transaction has a time bound set to N ahead of the current time (for some fixed N).
+\* But what is the current time?
+\* Initially it can be the time of the tx as recorded on ethereum, but what is it afterwards?
+\* For now, we use previousTx.maxTime+N
+SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
+  /\  \/  \neg bridgeHasLastTx[tx.hash]
+      \/  IrrevocablyInvalid(bridgeLastTx[tx.hash])
+  /\ \E seqNum \in SeqNum  : \* chosen by the client
+      LET timeBound ==
+            IF \neg bridgeHasLastTx[tx.hash]
+              THEN TxTime(tx)
+              ELSE bridgeLastTx[tx.hash].time+1 \* here N = 1
+          (* withdrawTx == *)
+            (* [from |-> BridgeStellarAccountId,  *)
+      IN
+        TRUE
 
 Next ==
     \/  SyncWithStellar

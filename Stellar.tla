@@ -8,8 +8,6 @@ CONSTANTS
     SeqNum,
     Time
 
-\* @typeAlias: STELLAR_TX = [from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int];
-
 Transaction == [from : AccountId, to : AccountId, amount : Amount, seq : SeqNum, maxTime : Time]
 
 VARIABLES

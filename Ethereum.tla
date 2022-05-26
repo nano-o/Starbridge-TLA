@@ -4,6 +4,7 @@ EXTENDS Integers
 
 CONSTANTS
     AccountId, \* the set of all account identifiers
+    (* StellarAccountId, *)
     Amount,
     Hash,
     Time
@@ -15,12 +16,11 @@ VARIABLES
     mempool, \* pending transactions
     executed, \* executed transactions, per block
     usedHashes,
-    time \* block time
+    time \* ethereum time
+
 
 \* balance is a private variables
 \* mempool, executed, and usedHashes constitute the external interface of this module
-
-Executed == UNION {executed[t] : t \in Time}
 
 Init ==
     /\  balance \in [AccountId -> Amount]
@@ -58,10 +58,16 @@ TypeOkay ==
     /\  usedHashes \in SUBSET Hash
     /\  time \in Time
 
+Executed == UNION {executed[t] : t \in Time}
+
 Inv ==
   \A tx1 \in mempool \cup Executed :
     /\  tx1.hash \in usedHashes
     /\  \A tx2 \in mempool \cup Executed :
         tx1 = tx2 \/ tx1.hash # tx2.hash
+    /\  tx1 \in Executed => \neg tx1 \in mempool
+    /\  \A t1,t2 \in Time :
+        \/  t1 = t2
+        \/  tx1 \in executed[t1] => \neg tx1 \in executed[t2]
 
 =============================================================================
