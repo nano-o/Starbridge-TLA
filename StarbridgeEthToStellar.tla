@@ -51,11 +51,14 @@ VARIABLES
     \* @type: Set(STELLAR_TX);
     bridgeStellarExecuted,
     \* @type: Int -> Set(ETH_TX);
-    bridgeEthereumExecuted
+    bridgeEthereumExecuted,
+    \* @type: HASH -> Bool;
+    bridgeRefunded
 
 ethereumVars == <<ethereumBalance, ethereumMempool, ethereumExecuted, ethereumUsedHashes, ethereumTime>>
 stellarVars == <<stellarBalance, stellarSeqNum, stellarTime, stellarMempool, stellarExecuted>>
-bridgeVars == <<bridgeHasLastTx, bridgeLastTx, bridgeStellarTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted>>
+bridgeVars == <<bridgeHasLastTx, bridgeLastTx, bridgeStellarTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted, bridgeRefunded>>
+bridgeChainsStateVars == <<bridgeStellarTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted>>
 
 Stellar == INSTANCE Stellar WITH
     AccountId <- StellarAccountId,
@@ -80,6 +83,7 @@ Init ==
     /\  bridgeStellarSeqNum = [a \in StellarAccountId |-> 0]
     /\  bridgeStellarExecuted = {}
     /\  bridgeEthereumExecuted = [t \in Time |-> {}]
+    /\  bridgeRefunded = [h \in Hash |-> FALSE]
     /\  Stellar!Init /\ Ethereum!Init
 
 TypeOkay ==
@@ -89,17 +93,18 @@ TypeOkay ==
     /\  bridgeStellarSeqNum \in [StellarAccountId -> SeqNum]
     /\  bridgeStellarExecuted \in SUBSET Stellar!Transaction
     /\  bridgeEthereumExecuted \in [Time -> SUBSET Ethereum!Transaction]
+    /\  bridgeRefunded \in [Hash -> BOOLEAN]
     /\  Stellar!TypeOkay /\ Ethereum!TypeOkay
 
 SyncWithStellar ==
     /\  bridgeStellarTime' = stellarTime
     /\  bridgeStellarSeqNum' = stellarSeqNum
     /\  bridgeStellarExecuted' = stellarExecuted
-    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeEthereumExecuted>>
+    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeEthereumExecuted, bridgeRefunded>>
 
 SyncWithEthereum ==
     /\  bridgeEthereumExecuted' = ethereumExecuted
-    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeStellarExecuted, bridgeStellarSeqNum, bridgeStellarTime>>
+    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeStellarExecuted, bridgeStellarSeqNum, bridgeStellarTime, bridgeRefunded>>
 
 \* A withdraw transaction is irrevocably invalid when its time bound has ellapsed or the sequence number of the receiving account is higher than the transaction's sequence number
 \* @type: (STELLAR_TX) => Bool;
@@ -120,6 +125,7 @@ TxTime(tx) == CHOOSE t \in Time : tx \in bridgeEthereumExecuted[t]
 \* Initially it can be the time of the tx as recorded on ethereum, but what is it afterwards?
 \* For now, we use previousTx.maxTime+WithdrawWindow
 SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
+  /\  \neg bridgeRefunded[tx.hash]
   /\  \/  \neg bridgeHasLastTx[tx.hash]
       \/  IrrevocablyInvalid(bridgeLastTx[tx.hash])
   /\ \E seqNum \in SeqNum  : \* chosen by the client
@@ -138,7 +144,23 @@ SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
         /\ Stellar!ReceiveTx(withdrawTx)
         /\ bridgeHasLastTx' = [bridgeHasLastTx EXCEPT ![tx.hash] = TRUE]
         /\ bridgeLastTx' = [bridgeLastTx EXCEPT ![tx.hash] = withdrawTx]
-  /\  UNCHANGED <<ethereumVars, bridgeStellarTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted>>
+  /\  UNCHANGED <<ethereumVars, bridgeChainsStateVars, bridgeRefunded>>
+
+SignRefundTransaction == \E tx \in BridgeEthereumExecuted :
+  /\  bridgeHasLastTx[tx.hash]
+  /\  IrrevocablyInvalid(bridgeLastTx[tx.hash])
+  /\  \neg bridgeRefunded[tx.hash]
+  /\  \E h \in Hash :
+      LET refundTx == [
+        from |-> BridgeEthereumAccountId,
+        to |-> tx.from,
+        amount |-> tx.amount,
+        hash |-> h,
+        memo |-> bridgeLastTx[tx.hash].to] \* memo is arbitrary
+      IN
+        Ethereum!ReceiveTx(refundTx)
+  /\  bridgeRefunded' = [bridgeRefunded EXCEPT ![tx.hash] = TRUE]
+  /\  UNCHANGED <<stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeChainsStateVars>>
 
 UserInitiates ==
   \* a client initiates a transfer on Ethereum:
@@ -153,6 +175,7 @@ Next ==
     \/  SyncWithEthereum
     \/  UserInitiates
     \/  SignWithdrawTransaction
+    \/  SignRefundTransaction
     \/ \* internal stellar transitions:
       /\ UNCHANGED <<ethereumVars, bridgeVars>>
       /\ \/  Stellar!Tick
