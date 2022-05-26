@@ -217,5 +217,4 @@ MainInvariant_ ==
   /\ TypeOkay
   /\ Ethereum!Inv
   /\ EthBridgeBalance - StellarWithdrawals >= 0
-   /\ stellarTime = 0
 =============================================================================

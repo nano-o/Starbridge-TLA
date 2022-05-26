@@ -39,7 +39,6 @@ ExecuteTx == \E tx \in mempool :
     /\  tx.seq = seqNum[tx.src]
     /\  time <= tx.maxTime
     /\  tx.amount >= 0
-    /\  tx.from # tx.to
     /\  seqNum' = [seqNum EXCEPT ![tx.src] = @+1]
     /\  mempool' = mempool \ {tx}
     /\  executed' = executed \union {tx}
