@@ -1,16 +1,17 @@
 ------------------------------ MODULE StarbridgeEthToStellar ------------------------------
 
+\* TODO: ideally, we would have a separate bridge module in which the private variables of the Stellar and Ethereum modules are not in scope
+
 EXTENDS Integers
 
 \* @typeAlias: STELLAR_TX = [from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int];
-\* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, hash : HASH, memo : STELLAR_ACCNT];
+\* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, memo : STELLAR_ACCNT];
 
 StellarAccountId == {"1_OF_STELLAR_ACCNT","2_OF_STELLAR_ACCNT"}
 EthereumAccountId == {"1_OF_ETH_ACCNT","2_OF_ETH_ACCNT"}
 Amount == 0..1
 SeqNum == 0..2
 Time == 0..4
-Hash == {"0_OF_HASH","1_OF_HASH"}
 WithdrawWindow == 1 \* time window the user has to execute a withdraw operation on Stellar
 
 BridgeStellarAccountId == "1_OF_STELLAR_ACCNT"
@@ -34,16 +35,14 @@ VARIABLES
     ethereumMempool,
     \* @type: Int -> Set(ETH_TX);
     ethereumExecuted,
-    \* @type: Set(HASH);
-    ethereumUsedHashes,
     \* @type: Int;
     ethereumTime,
 
     \* state of the bridge:
-    \* @type: HASH -> Bool;
-    bridgeHasLastTx,
-    \* @type: HASH -> STELLAR_TX;
-    bridgeLastTx,
+    \* @type: ETH_TX -> Bool;
+    bridgeIssuedWithdrawTx,
+    \* @type: ETH_TX -> STELLAR_TX;
+    bridgeLastWithdrawTx,
     \* @type: Int;
     bridgeStellarTime,
     \* @type: STELLAR_ACCNT -> Int;
@@ -52,12 +51,12 @@ VARIABLES
     bridgeStellarExecuted,
     \* @type: Int -> Set(ETH_TX);
     bridgeEthereumExecuted,
-    \* @type: HASH -> Bool;
+    \* @type: ETH_TX -> Bool;
     bridgeRefunded
 
-ethereumVars == <<ethereumBalance, ethereumMempool, ethereumExecuted, ethereumUsedHashes, ethereumTime>>
+ethereumVars == <<ethereumBalance, ethereumMempool, ethereumExecuted, ethereumTime>>
 stellarVars == <<stellarBalance, stellarSeqNum, stellarTime, stellarMempool, stellarExecuted>>
-bridgeVars == <<bridgeHasLastTx, bridgeLastTx, bridgeStellarTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted, bridgeRefunded>>
+bridgeVars == <<bridgeIssuedWithdrawTx, bridgeLastWithdrawTx, bridgeStellarTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted, bridgeRefunded>>
 bridgeChainsStateVars == <<bridgeStellarTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted>>
 
 Stellar == INSTANCE Stellar WITH
@@ -73,38 +72,37 @@ Ethereum == INSTANCE Ethereum WITH
     balance <- ethereumBalance,
     mempool <- ethereumMempool,
     executed <- ethereumExecuted,
-    usedHashes <- ethereumUsedHashes,
     time <- ethereumTime
 
 Init ==
-    /\  bridgeHasLastTx = [h \in Hash |-> FALSE]
-    /\  bridgeLastTx = [h \in Hash |-> CHOOSE tx \in Stellar!Transaction : TRUE]
+    /\  bridgeIssuedWithdrawTx = [tx \in Ethereum!Transaction |-> FALSE]
+    /\  bridgeLastWithdrawTx = [tx \in Ethereum!Transaction |-> CHOOSE tx_ \in Stellar!Transaction : TRUE]
     /\  bridgeStellarTime = 0
     /\  bridgeStellarSeqNum = [a \in StellarAccountId |-> 0]
     /\  bridgeStellarExecuted = {}
     /\  bridgeEthereumExecuted = [t \in Time |-> {}]
-    /\  bridgeRefunded = [h \in Hash |-> FALSE]
+    /\  bridgeRefunded = [tx \in Ethereum!Transaction |-> FALSE]
     /\  Stellar!Init /\ Ethereum!Init
 
 TypeOkay ==
-    /\  bridgeHasLastTx \in [Hash -> BOOLEAN]
-    /\  bridgeLastTx \in [Hash -> Stellar!Transaction]
+    /\  bridgeIssuedWithdrawTx \in [Ethereum!Transaction -> BOOLEAN]
+    /\  bridgeLastWithdrawTx \in [Ethereum!Transaction -> Stellar!Transaction]
     /\  bridgeStellarTime \in Time
     /\  bridgeStellarSeqNum \in [StellarAccountId -> SeqNum]
     /\  bridgeStellarExecuted \in SUBSET Stellar!Transaction
     /\  bridgeEthereumExecuted \in [Time -> SUBSET Ethereum!Transaction]
-    /\  bridgeRefunded \in [Hash -> BOOLEAN]
+    /\  bridgeRefunded \in [Ethereum!Transaction -> BOOLEAN]
     /\  Stellar!TypeOkay /\ Ethereum!TypeOkay
 
 SyncWithStellar ==
     /\  bridgeStellarTime' = stellarTime
     /\  bridgeStellarSeqNum' = stellarSeqNum
     /\  bridgeStellarExecuted' = stellarExecuted
-    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeEthereumExecuted, bridgeRefunded>>
+    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeIssuedWithdrawTx, bridgeLastWithdrawTx, bridgeEthereumExecuted, bridgeRefunded>>
 
 SyncWithEthereum ==
     /\  bridgeEthereumExecuted' = ethereumExecuted
-    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeStellarExecuted, bridgeStellarSeqNum, bridgeStellarTime, bridgeRefunded>>
+    /\  UNCHANGED <<ethereumVars, stellarVars, bridgeIssuedWithdrawTx, bridgeLastWithdrawTx, bridgeStellarExecuted, bridgeStellarSeqNum, bridgeStellarTime, bridgeRefunded>>
 
 \* A withdraw transaction is irrevocably invalid when its time bound has ellapsed or the sequence number of the receiving account is higher than the transaction's sequence number
 \* @type: (STELLAR_TX) => Bool;
@@ -125,14 +123,14 @@ TxTime(tx) == CHOOSE t \in Time : tx \in bridgeEthereumExecuted[t]
 \* Initially it can be the time of the tx as recorded on ethereum, but what is it afterwards?
 \* For now, we use previousTx.maxTime+WithdrawWindow
 SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
-  /\  \neg bridgeRefunded[tx.hash]
-  /\  \/  \neg bridgeHasLastTx[tx.hash]
-      \/  IrrevocablyInvalid(bridgeLastTx[tx.hash])
+  /\  \neg bridgeRefunded[tx]
+  /\  \/  \neg bridgeIssuedWithdrawTx[tx]
+      \/  IrrevocablyInvalid(bridgeLastWithdrawTx[tx])
   /\ \E seqNum \in SeqNum  : \* chosen by the client
       LET timeBound ==
-            IF \neg bridgeHasLastTx[tx.hash]
+            IF \neg bridgeIssuedWithdrawTx[tx]
               THEN TxTime(tx)+WithdrawWindow
-              ELSE bridgeLastTx[tx.hash].time+WithdrawWindow
+              ELSE bridgeLastWithdrawTx[tx].time+WithdrawWindow
           withdrawTx == [
             from |-> BridgeStellarAccountId,
             to |-> tx.memo,
@@ -142,32 +140,30 @@ SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
       IN
         /\ timeBound \in Time \* for the model-checker
         /\ Stellar!ReceiveTx(withdrawTx)
-        /\ bridgeHasLastTx' = [bridgeHasLastTx EXCEPT ![tx.hash] = TRUE]
-        /\ bridgeLastTx' = [bridgeLastTx EXCEPT ![tx.hash] = withdrawTx]
+        /\ bridgeIssuedWithdrawTx' = [bridgeIssuedWithdrawTx EXCEPT ![tx] = TRUE]
+        /\ bridgeLastWithdrawTx' = [bridgeLastWithdrawTx EXCEPT ![tx] = withdrawTx]
   /\  UNCHANGED <<ethereumVars, bridgeChainsStateVars, bridgeRefunded>>
 
 SignRefundTransaction == \E tx \in BridgeEthereumExecuted :
-  /\  bridgeHasLastTx[tx.hash]
-  /\  IrrevocablyInvalid(bridgeLastTx[tx.hash])
-  /\  \neg bridgeRefunded[tx.hash]
-  /\  \E h \in Hash :
-      LET refundTx == [
+  /\  bridgeIssuedWithdrawTx[tx]
+  /\  IrrevocablyInvalid(bridgeLastWithdrawTx[tx])
+  /\  \neg bridgeRefunded[tx]
+  /\  LET refundTx == [
         from |-> BridgeEthereumAccountId,
         to |-> tx.from,
         amount |-> tx.amount,
-        hash |-> h,
-        memo |-> bridgeLastTx[tx.hash].to] \* memo is arbitrary
+        memo |-> bridgeLastWithdrawTx[tx].to] \* memo is arbitrary
       IN
         Ethereum!ReceiveTx(refundTx)
-  /\  bridgeRefunded' = [bridgeRefunded EXCEPT ![tx.hash] = TRUE]
-  /\  UNCHANGED <<stellarVars, bridgeHasLastTx, bridgeLastTx, bridgeChainsStateVars>>
+  /\  bridgeRefunded' = [bridgeRefunded EXCEPT ![tx] = TRUE]
+  /\  UNCHANGED <<stellarVars, bridgeIssuedWithdrawTx, bridgeLastWithdrawTx, bridgeChainsStateVars>>
 
 UserInitiates ==
   \* a client initiates a transfer on Ethereum:
   /\ UNCHANGED <<stellarVars, bridgeVars>>
   /\ \E src \in EthereumAccountId \ {BridgeEthereumAccountId},
-          x \in Amount \ {0}, h \in Hash, dst \in StellarAccountId \ {BridgeStellarAccountId} :
-       LET tx == [from |-> src, to |-> BridgeEthereumAccountId, amount |-> x, hash |-> h, memo |-> dst]
+          x \in Amount \ {0}, dst \in StellarAccountId \ {BridgeStellarAccountId} :
+       LET tx == [from |-> src, to |-> BridgeEthereumAccountId, amount |-> x, memo |-> dst]
        IN  Ethereum!ReceiveTx(tx)
 
 Next ==
