@@ -5,7 +5,7 @@
 EXTENDS Integers, Apalache, FiniteSets, TLC
 
 \* @typeAlias: STELLAR_TX = [src : STELLAR_ACCNT, from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int, memo : HASH];
-\* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, data : STELLAR_ACCNT, hash : HASH];
+\* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, stellarDst : STELLAR_ACCNT, hash : HASH, refundId : HASH];
 
 StellarAccountId == {"BRIDGE_OF_STELLAR_ACCNT","USER_OF_STELLAR_ACCNT"}
 EthereumAccountId == {"BRIDGE_OF_ETH_ACCNT","USER_OF_ETH_ACCNT"}
@@ -119,9 +119,9 @@ SignWithdrawTransaction == \E tx \in Ethereum!Executed :
               THEN TxTime(tx)+WithdrawWindow
               ELSE bridgeLastWithdrawTx[tx.hash].maxTime+WithdrawWindow
           withdrawTx == [
-            src |-> tx.data,
+            src |-> tx.stellarDst,
             from |-> BridgeStellarAccountId,
-            to |-> tx.data,
+            to |-> tx.stellarDst,
             amount |-> tx.amount,
             seq |-> seqNum,
             maxTime |-> timeBound,
@@ -138,7 +138,8 @@ RefundTx(tx, hash) == [
   from |-> BridgeEthereumAccountId,
   to |-> tx.from,
   amount |-> tx.amount,
-  data |-> BridgeStellarAccountId,
+  stellarDst |-> tx.stellarDst,
+  refundId |-> tx.hash,
   hash |-> hash ]
 
 SignRefundTransaction == \E tx \in Ethereum!Executed :
@@ -159,7 +160,13 @@ UserInitiates ==
   /\ \E src \in EthereumAccountId \ {BridgeEthereumAccountId},
           x \in Amount \ {0}, dst \in StellarAccountId \ {BridgeStellarAccountId},
         hash \in Hash :
-       LET tx == [from |-> src, to |-> BridgeEthereumAccountId, amount |-> x, data |-> dst, hash |-> hash]
+       LET tx == [
+          from |-> src,
+          to |-> BridgeEthereumAccountId,
+          amount |-> x,
+          stellarDst |-> dst,
+          hash |-> hash,
+          refundId |-> hash ] \* refundId does not matter here
        IN  Ethereum!ExecuteTx(tx)
 
 Next ==
@@ -204,7 +211,7 @@ TransactionFromHash(h) ==
   CHOOSE tx \in Ethereum!Executed :
     tx.hash = h
 
-Inv1 == \A h \in Hash : h \in bridgeRefunded =>
+Inv1 == \A h \in bridgeRefunded :
   \E tx \in Ethereum!Executed :
     /\ tx.hash = h
     /\ \E h2 \in Hash : RefundTx(tx, h2) \in Ethereum!Executed
@@ -213,11 +220,17 @@ Inv1_ == TypeOkay /\ Inv0 /\ Inv1
 Inv2 == \A tx \in stellarMempool \union stellarExecuted :
   tx.from = BridgeStellarAccountId =>
     \E ethTx \in Ethereum!Executed:
-      ethTx.hash = tx.memo
+      /\ ethTx.hash = tx.memo
+      /\ ethTx.to = BridgeEthereumAccountId
+      /\ ethTx.amount = tx.amount
 Inv2_ == TypeOkay /\ Inv2
 
-(* Inv3 == \A tx \in stellarExecuted : *)
-  (* \A ethTx \in ethereumExecuted : *)
+Inv3 == \A refund \in Ethereum!Executed :
+  refund.from = BridgeEthereumAccountId => \* if it's a refund:
+    \E tx \in Ethereum!Executed :
+      /\ tx.hash = refund.refundId
+      /\ tx.to = BridgeEthereumAccountId
+      /\ tx.amount = refund.amount
 
 \* Funds deposited in the bridge account always exceed or are equal to the funds taken out:
 MainInvariant ==

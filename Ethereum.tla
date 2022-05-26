@@ -9,7 +9,13 @@ CONSTANTS
     Time,
     Hash
 
-Transaction == [from : AccountId, to : AccountId, amount : Amount, data : StellarAccountId, hash : Hash]
+Transaction == [
+  from : AccountId,
+  to : AccountId,
+  amount : Amount,
+  stellarDst : StellarAccountId,
+  hash : Hash,
+  refundId : Hash ]
 
 VARIABLES
     executed, \* executed transactions, per block
