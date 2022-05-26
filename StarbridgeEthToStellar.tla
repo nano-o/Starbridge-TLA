@@ -3,7 +3,7 @@
 EXTENDS Integers
 
 \* @typeAlias: STELLAR_TX = [from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int];
-\* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, hash : HASH];
+\* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, hash : HASH, memo : STELLAR_ACCNT];
 
 StellarAccountId == {"1_OF_STELLAR_ACCNT","2_OF_STELLAR_ACCNT"}
 EthereumAccountId == {"1_OF_ETH_ACCNT","2_OF_ETH_ACCNT"}
@@ -149,8 +149,8 @@ Next ==
       \* a client initiates a transfer on Ethereum:
       /\ UNCHANGED <<stellarVars, bridgeVars>>
       /\ \E src \in EthereumAccountId \ {BridgeEthereumAccountId},
-              x \in Amount \ {0}, h \in Hash :
-           LET tx == [from |-> src, to |-> BridgeEthereumAccountId, amount |-> x, hash |-> h]
+              x \in Amount \ {0}, h \in Hash, dst \in StellarAccountId \ {BridgeStellarAccountId} :
+           LET tx == [from |-> src, to |-> BridgeEthereumAccountId, amount |-> x, hash |-> h, memo |-> dst]
            IN  Ethereum!ReceiveTx(tx)
 
 Inv == Ethereum!Inv

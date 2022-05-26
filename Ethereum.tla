@@ -4,12 +4,12 @@ EXTENDS Integers
 
 CONSTANTS
     AccountId, \* the set of all account identifiers
-    (* StellarAccountId, *)
+    StellarAccountId,
     Amount,
     Hash,
     Time
 
-Transaction == [from : AccountId, to : AccountId, amount : Amount, hash : Hash]
+Transaction == [from : AccountId, to : AccountId, amount : Amount, hash : Hash, memo : StellarAccountId]
 
 VARIABLES
     balance, \* a function mapping an account id to the account's balance
