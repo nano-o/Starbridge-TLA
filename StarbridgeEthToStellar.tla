@@ -7,15 +7,15 @@ EXTENDS Integers, Apalache
 \* @typeAlias: STELLAR_TX = [src : STELLAR_ACCNT, from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int];
 \* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, memo : STELLAR_ACCNT];
 
-StellarAccountId == {"1_OF_STELLAR_ACCNT","2_OF_STELLAR_ACCNT"}
-EthereumAccountId == {"1_OF_ETH_ACCNT","2_OF_ETH_ACCNT"}
+StellarAccountId == {"BRIDGE_OF_STELLAR_ACCNT","USER_OF_STELLAR_ACCNT"}
+EthereumAccountId == {"BRIDGE_OF_ETH_ACCNT","USER_OF_ETH_ACCNT"}
 Amount == 0..1
 SeqNum == 0..1
 Time == 0..1
 WithdrawWindow == 1 \* time window the user has to execute a withdraw operation on Stellar
 
-BridgeStellarAccountId == "1_OF_STELLAR_ACCNT"
-BridgeEthereumAccountId == "1_OF_ETH_ACCNT"
+BridgeStellarAccountId == "BRIDGE_OF_STELLAR_ACCNT"
+BridgeEthereumAccountId == "BRIDGE_OF_ETH_ACCNT"
 
 VARIABLES
     \* state of Stellar and Ethereum:
@@ -33,9 +33,10 @@ VARIABLES
     ethereumTime,
 
     \* state of the bridge:
-    \* @type: ETH_TX -> Bool;
+    \* @type: Set(ETH_TX);
     bridgeIssuedWithdrawTx,
-    \* @type: ETH_TX -> STELLAR_TX;
+    \* TODO use a partial function for this? This type makes things slow:
+    \* @type: Set(<<ETH_TX, STELLAR_TX>>);
     bridgeLastWithdrawTx,
     \* @type: Int;
     bridgeStellarTime,
@@ -45,7 +46,7 @@ VARIABLES
     bridgeStellarExecuted,
     \* @type: Int -> Set(ETH_TX);
     bridgeEthereumExecuted,
-    \* @type: ETH_TX -> Bool;
+    \* @type: Set(ETH_TX);
     bridgeRefunded
 
 ethereumVars == <<ethereumExecuted, ethereumTime>>
@@ -67,23 +68,23 @@ Ethereum == INSTANCE Ethereum WITH
     time <- ethereumTime
 
 Init ==
-    /\  bridgeIssuedWithdrawTx = [tx \in Ethereum!Transaction |-> FALSE]
-    /\  bridgeLastWithdrawTx = [tx \in Ethereum!Transaction |-> CHOOSE tx_ \in Stellar!Transaction : TRUE]
+    /\  bridgeIssuedWithdrawTx = {}
+    /\  bridgeLastWithdrawTx = {}
     /\  bridgeStellarTime = 0
     /\  bridgeStellarSeqNum = [a \in StellarAccountId |-> 0]
     /\  bridgeStellarExecuted = {}
     /\  bridgeEthereumExecuted = [t \in Time |-> {}]
-    /\  bridgeRefunded = [tx \in Ethereum!Transaction |-> FALSE]
+    /\  bridgeRefunded = {}
     /\  Stellar!Init /\ Ethereum!Init
 
 TypeOkay ==
-    /\  bridgeIssuedWithdrawTx \in [Ethereum!Transaction -> BOOLEAN]
-    /\  bridgeLastWithdrawTx \in [Ethereum!Transaction -> Stellar!Transaction]
+    /\  bridgeIssuedWithdrawTx \in SUBSET Ethereum!Transaction
+    /\  bridgeLastWithdrawTx \in SUBSET (Ethereum!Transaction \times Stellar!Transaction)
     /\  bridgeStellarTime \in Time
     /\  bridgeStellarSeqNum \in [StellarAccountId -> SeqNum]
     /\  bridgeStellarExecuted \in SUBSET Stellar!Transaction
     /\  bridgeEthereumExecuted \in [Time -> SUBSET Ethereum!Transaction]
-    /\  bridgeRefunded \in [Ethereum!Transaction -> BOOLEAN]
+    /\  bridgeRefunded \in SUBSET Ethereum!Transaction
     /\  Stellar!TypeOkay /\ Ethereum!TypeOkay
 
 SyncWithStellar ==
@@ -107,6 +108,10 @@ BridgeEthereumExecuted == UNION {bridgeEthereumExecuted[t] : t \in Time}
 \* timestamp of a transaction on Ethereum as seen by the bridge
 TxTime(tx) == CHOOSE t \in Time : tx \in bridgeEthereumExecuted[t]
 
+LastWithdrawTx(tx) ==
+  CHOOSE withdrawTx \in Stellar!Transaction :
+    <<tx, withdrawTx>> \in bridgeLastWithdrawTx
+
 \* The bridge signs a new withdraw transaction when:
 \* It never did so before for the same hash,
 \* or the previous withdraw transaction is irrevocably invalid and the withdraw transaction has not been executed.
@@ -115,15 +120,15 @@ TxTime(tx) == CHOOSE t \in Time : tx \in bridgeEthereumExecuted[t]
 \* Initially it can be the time of the tx as recorded on ethereum, but what is it afterwards?
 \* For now, we use previousTx.maxTime+WithdrawWindow
 SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
-  /\  \neg bridgeRefunded[tx]
-  /\  \/ \neg bridgeIssuedWithdrawTx[tx]
-      \/ /\ \neg bridgeLastWithdrawTx[tx] \in bridgeStellarExecuted
-         /\ IrrevocablyInvalid(bridgeLastWithdrawTx[tx])
+  /\  \neg tx \in bridgeRefunded
+  /\  tx \in bridgeIssuedWithdrawTx
+      => /\ \neg LastWithdrawTx(tx) \in bridgeStellarExecuted
+         /\ IrrevocablyInvalid(LastWithdrawTx(tx))
   /\ \E seqNum \in SeqNum  : \* chosen by the client
       LET timeBound ==
-            IF \neg bridgeIssuedWithdrawTx[tx]
+            IF \neg tx \in bridgeIssuedWithdrawTx
               THEN TxTime(tx)+WithdrawWindow
-              ELSE bridgeLastWithdrawTx[tx].time+WithdrawWindow
+              ELSE LastWithdrawTx(tx).time+WithdrawWindow
           withdrawTx == [
             src |-> tx.memo,
             from |-> BridgeStellarAccountId,
@@ -134,22 +139,22 @@ SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
       IN
         /\ timeBound \in Time \* for the model-checker
         /\ Stellar!ReceiveTx(withdrawTx)
-        /\ bridgeIssuedWithdrawTx' = [bridgeIssuedWithdrawTx EXCEPT ![tx] = TRUE]
-        /\ bridgeLastWithdrawTx' = [bridgeLastWithdrawTx EXCEPT ![tx] = withdrawTx]
+        /\ bridgeIssuedWithdrawTx' = bridgeIssuedWithdrawTx \union {tx}
+        /\ bridgeLastWithdrawTx' = bridgeLastWithdrawTx \union {<<tx, withdrawTx>>}
   /\  UNCHANGED <<ethereumVars, bridgeChainsStateVars, bridgeRefunded>>
 
 SignRefundTransaction == \E tx \in BridgeEthereumExecuted :
-  /\  bridgeIssuedWithdrawTx[tx]
-  /\  IrrevocablyInvalid(bridgeLastWithdrawTx[tx])
-  /\  \neg bridgeRefunded[tx]
+  /\  tx \in bridgeIssuedWithdrawTx
+  /\  IrrevocablyInvalid(LastWithdrawTx(tx))
+  /\  \neg tx \in bridgeRefunded
   /\  LET refundTx == [
         from |-> BridgeEthereumAccountId,
         to |-> tx.from,
         amount |-> tx.amount,
-        memo |-> bridgeLastWithdrawTx[tx].to] \* memo is arbitrary
+        memo |-> LastWithdrawTx(tx).to] \* memo is arbitrary
       IN
         Ethereum!ExecuteTx(refundTx)
-  /\  bridgeRefunded' = [bridgeRefunded EXCEPT ![tx] = TRUE]
+  /\  bridgeRefunded' = bridgeRefunded \union {tx}
   /\  UNCHANGED <<stellarVars, bridgeIssuedWithdrawTx, bridgeLastWithdrawTx, bridgeChainsStateVars>>
 
 UserInitiates ==
@@ -196,8 +201,8 @@ StellarWithdrawals ==
   IN
     ApaFoldSet(Step, 0, stellarExecuted)
 
-Inv_ == TypeOkay /\ Ethereum!Inv
-Inv == Ethereum!Inv
+Inv1 == \A tx \in Ethereum!Transaction :
+  tx \in bridgeRefunded => tx \in Ethereum!Executed
 
 \* Funds deposited in the bridge account always exceed or are equal to the funds taken out:
 MainInvariant ==
