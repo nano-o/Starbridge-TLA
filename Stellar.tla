@@ -12,7 +12,6 @@ CONSTANTS
 Transaction == [src : AccountId, from : AccountId, to : AccountId, amount : Amount, seq : SeqNum, maxTime : Time]
 
 VARIABLES
-    balance, \* a function mapping an account id to the account's balance
     seqNum, \* a function mapping an account id to the account's sequence number
     time, \* last ledger close time
     mempool, \* pending mempool; that's the interface to the outer world
@@ -22,7 +21,6 @@ VARIABLES
 \* mempool, executed, time, and seqNum are interface variables
 
 Init ==
-    /\  balance = [a \in AccountId |-> 0]
     /\  seqNum \in [AccountId -> SeqNum]
     /\  time = 0
     /\  mempool = {}
@@ -30,30 +28,25 @@ Init ==
 
 Tick  ==
     /\  time' = time + 1
-    /\  UNCHANGED <<balance, seqNum, mempool, executed>>
+    /\  UNCHANGED <<seqNum, mempool, executed>>
     /\  time' \in Time
 
 ReceiveTx(tx) ==
     /\  mempool' = mempool \union {tx}
-    /\  UNCHANGED <<time, balance, seqNum, executed>>
+    /\  UNCHANGED <<time, seqNum, executed>>
 
 ExecuteTx == \E tx \in mempool :
     /\  tx.seq = seqNum[tx.src]
     /\  tx.maxTime <= time
     /\  tx.amount >= 0
     /\  tx.from # tx.to
-    /\  \/  tx.amount <= balance[tx.from]
-        \/  tx.from = BridgeAccountId \* the bridge is the asset issuer
     /\  seqNum' = [seqNum EXCEPT ![tx.src] = @+1]
-    /\  balance' = [balance EXCEPT ![tx.from] = @-tx.amount, ![tx.to] = @+tx.amount]
     /\  mempool' = mempool \ {tx}
     /\  executed' = executed \union {tx}
     /\  UNCHANGED time
-    /\  balance'[tx.to] \in Amount
-    /\  seqNum'[tx.from] \in SeqNum
+    /\  seqNum'[tx.src] \in SeqNum
 
 TypeOkay ==
-    /\  balance \in [AccountId -> Amount]
     /\  seqNum \in [AccountId -> SeqNum]
     /\  time \in Time
     /\  time >= 0

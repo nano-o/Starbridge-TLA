@@ -1,7 +1,6 @@
 ------------------------------ MODULE StarbridgeEthToStellar ------------------------------
 
 \* TODO ideally, we would have a separate bridge module in which the private variables of the Stellar and Ethereum modules are not in scope
-\* TODO we don't need to track balances
 
 EXTENDS Integers, Apalache
 
@@ -10,9 +9,9 @@ EXTENDS Integers, Apalache
 
 StellarAccountId == {"1_OF_STELLAR_ACCNT","2_OF_STELLAR_ACCNT"}
 EthereumAccountId == {"1_OF_ETH_ACCNT","2_OF_ETH_ACCNT"}
-Amount == 0..3
-SeqNum == 0..2
-Time == 0..2
+Amount == 0..1
+SeqNum == 0..1
+Time == 0..1
 WithdrawWindow == 1 \* time window the user has to execute a withdraw operation on Stellar
 
 BridgeStellarAccountId == "1_OF_STELLAR_ACCNT"
@@ -21,8 +20,6 @@ BridgeEthereumAccountId == "1_OF_ETH_ACCNT"
 VARIABLES
     \* state of Stellar and Ethereum:
     \* @type: STELLAR_ACCNT -> Int;
-    stellarBalance,
-    \* @type: STELLAR_ACCNT -> Int;
     stellarSeqNum,
     \* @type: Int;
     stellarTime,
@@ -30,10 +27,6 @@ VARIABLES
     stellarMempool,
     \* @type: Set(STELLAR_TX);
     stellarExecuted,
-    \* @type: ETH_ACCNT -> Int;
-    ethereumBalance,
-    \* @type: Set(ETH_TX);
-    ethereumMempool,
     \* @type: Int -> Set(ETH_TX);
     ethereumExecuted,
     \* @type: Int;
@@ -55,15 +48,14 @@ VARIABLES
     \* @type: ETH_TX -> Bool;
     bridgeRefunded
 
-ethereumVars == <<ethereumBalance, ethereumMempool, ethereumExecuted, ethereumTime>>
-stellarVars == <<stellarBalance, stellarSeqNum, stellarTime, stellarMempool, stellarExecuted>>
+ethereumVars == <<ethereumExecuted, ethereumTime>>
+stellarVars == <<stellarSeqNum, stellarTime, stellarMempool, stellarExecuted>>
 bridgeVars == <<bridgeIssuedWithdrawTx, bridgeLastWithdrawTx, bridgeStellarTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted, bridgeRefunded>>
 bridgeChainsStateVars == <<bridgeStellarTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted>>
 
 Stellar == INSTANCE Stellar WITH
     AccountId <- StellarAccountId,
     BridgeAccountId <- BridgeStellarAccountId,
-    balance <- stellarBalance,
     seqNum <- stellarSeqNum,
     time <- stellarTime,
     mempool <- stellarMempool,
@@ -71,8 +63,6 @@ Stellar == INSTANCE Stellar WITH
 
 Ethereum == INSTANCE Ethereum WITH
     AccountId <- EthereumAccountId,
-    balance <- ethereumBalance,
-    mempool <- ethereumMempool,
     executed <- ethereumExecuted,
     time <- ethereumTime
 
@@ -158,7 +148,7 @@ SignRefundTransaction == \E tx \in BridgeEthereumExecuted :
         amount |-> tx.amount,
         memo |-> bridgeLastWithdrawTx[tx].to] \* memo is arbitrary
       IN
-        Ethereum!ReceiveTx(refundTx)
+        Ethereum!ExecuteTx(refundTx)
   /\  bridgeRefunded' = [bridgeRefunded EXCEPT ![tx] = TRUE]
   /\  UNCHANGED <<stellarVars, bridgeIssuedWithdrawTx, bridgeLastWithdrawTx, bridgeChainsStateVars>>
 
@@ -168,7 +158,7 @@ UserInitiates ==
   /\ \E src \in EthereumAccountId \ {BridgeEthereumAccountId},
           x \in Amount \ {0}, dst \in StellarAccountId \ {BridgeStellarAccountId} :
        LET tx == [from |-> src, to |-> BridgeEthereumAccountId, amount |-> x, memo |-> dst]
-       IN  Ethereum!ReceiveTx(tx)
+       IN  Ethereum!ExecuteTx(tx)
 
 Next ==
     \/  SyncWithStellar
@@ -182,8 +172,7 @@ Next ==
          \/  Stellar!ExecuteTx
     \/ \* internal ethereum transitions:
       /\ UNCHANGED <<stellarVars, bridgeVars>>
-      /\ \/ Ethereum!ExecuteTx
-         \/ Ethereum!Tick
+      /\ Ethereum!Tick
 
 
 EthBridgeBalance == \* funds sent to the bridge on Ethereum minus refunds
@@ -207,7 +196,8 @@ StellarWithdrawals ==
   IN
     ApaFoldSet(Step, 0, stellarExecuted)
 
-Inv == TypeOkay /\ Ethereum!Inv
+Inv_ == TypeOkay /\ Ethereum!Inv
+Inv == Ethereum!Inv
 
 \* Funds deposited in the bridge account always exceed or are equal to the funds taken out:
 MainInvariant ==
