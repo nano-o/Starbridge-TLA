@@ -32,10 +32,8 @@ Tick  ==
     /\  UNCHANGED <<balance, seqNum, mempool, executed>>
     /\  time' \in Time
 
-ReceiveTx ==
-    /\  \E a1 \in AccountId, a2 \in AccountId, x \in Amount, s \in SeqNum, t \in Time :
-            mempool' = mempool
-                \union {[from |-> a1, to |-> a2, amount |-> x, seq |-> s, maxTime |-> t]}
+ReceiveTx(tx) ==
+    /\  mempool' = mempool \union {tx}
     /\  UNCHANGED <<time, balance, seqNum, executed>>
 
 ExecuteTx == \E tx \in mempool :

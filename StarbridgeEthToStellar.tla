@@ -11,6 +11,7 @@ Amount == 0..1
 SeqNum == 0..2
 Time == 0..4
 Hash == {"0_OF_HASH","1_OF_HASH"}
+WithdrawWindow == 1 \* time window the user has to execute a withdraw operation on Stellar
 
 BridgeStellarAccountId == "1_OF_STELLAR_ACCNT"
 BridgeEthereumAccountId == "1_OF_ETH_ACCNT"
@@ -114,44 +115,52 @@ TxTime(tx) == CHOOSE t \in Time : tx \in bridgeEthereumExecuted[t]
 \* The bridge signs a new withdraw transaction when:
 \* It never did so before for the same hash,
 \* or the previous withdraw transaction is irrevocably invalid.
-\* The transaction has a time bound set to N ahead of the current time (for some fixed N).
+\* The transaction has a time bound set to WithdrawWindow ahead of the current time.
 \* But what is the current time?
 \* Initially it can be the time of the tx as recorded on ethereum, but what is it afterwards?
-\* For now, we use previousTx.maxTime+N
+\* For now, we use previousTx.maxTime+WithdrawWindow
 SignWithdrawTransaction == \E tx \in BridgeEthereumExecuted :
   /\  \/  \neg bridgeHasLastTx[tx.hash]
       \/  IrrevocablyInvalid(bridgeLastTx[tx.hash])
   /\ \E seqNum \in SeqNum  : \* chosen by the client
       LET timeBound ==
             IF \neg bridgeHasLastTx[tx.hash]
-              THEN TxTime(tx)
-              ELSE bridgeLastTx[tx.hash].time+1 \* here N = 1
-          (* withdrawTx == *)
-            (* [from |-> BridgeStellarAccountId,  *)
+              THEN TxTime(tx)+WithdrawWindow
+              ELSE bridgeLastTx[tx.hash].time+WithdrawWindow
+          withdrawTx == [
+            from |-> BridgeStellarAccountId,
+            to |-> tx.memo,
+            amount |-> tx.amount,
+            seq |-> seqNum,
+            maxTime |-> timeBound]
       IN
-        TRUE
+        /\ timeBound \in Time \* for the model-checker
+        /\ Stellar!ReceiveTx(withdrawTx)
+        /\ bridgeHasLastTx' = [bridgeHasLastTx EXCEPT ![tx.hash] = TRUE]
+        /\ bridgeLastTx' = [bridgeLastTx EXCEPT ![tx.hash] = withdrawTx]
+  /\  UNCHANGED <<ethereumVars, bridgeStellarTime, bridgeStellarSeqNum, bridgeStellarExecuted, bridgeEthereumExecuted>>
+
+UserInitiates ==
+  \* a client initiates a transfer on Ethereum:
+  /\ UNCHANGED <<stellarVars, bridgeVars>>
+  /\ \E src \in EthereumAccountId \ {BridgeEthereumAccountId},
+          x \in Amount \ {0}, h \in Hash, dst \in StellarAccountId \ {BridgeStellarAccountId} :
+       LET tx == [from |-> src, to |-> BridgeEthereumAccountId, amount |-> x, hash |-> h, memo |-> dst]
+       IN  Ethereum!ReceiveTx(tx)
 
 Next ==
     \/  SyncWithStellar
     \/  SyncWithEthereum
-    \/
-      \* internal stellar transitions:
+    \/  UserInitiates
+    \/  SignWithdrawTransaction
+    \/ \* internal stellar transitions:
       /\ UNCHANGED <<ethereumVars, bridgeVars>>
-      /\
-           \/  Stellar!Tick
-           \/  Stellar!ExecuteTx
-    \/
-      \* internal ethereum transitions:
+      /\ \/  Stellar!Tick
+         \/  Stellar!ExecuteTx
+    \/ \* internal ethereum transitions:
       /\ UNCHANGED <<stellarVars, bridgeVars>>
       /\ \/ Ethereum!ExecuteTx
          \/ Ethereum!Tick
-    \/
-      \* a client initiates a transfer on Ethereum:
-      /\ UNCHANGED <<stellarVars, bridgeVars>>
-      /\ \E src \in EthereumAccountId \ {BridgeEthereumAccountId},
-              x \in Amount \ {0}, h \in Hash, dst \in StellarAccountId \ {BridgeStellarAccountId} :
-           LET tx == [from |-> src, to |-> BridgeEthereumAccountId, amount |-> x, hash |-> h, memo |-> dst]
-           IN  Ethereum!ReceiveTx(tx)
 
 Inv == Ethereum!Inv
 Inv_ == TypeOkay /\ Inv
