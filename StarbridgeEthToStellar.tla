@@ -178,6 +178,7 @@ Next ==
       /\ UNCHANGED <<ethereumVars, bridgeVars>>
       /\ \/  Stellar!Tick
          \/  Stellar!ExecuteTx
+         \/  Stellar!BumpSeqNum
     \/ \* internal ethereum transitions:
       /\ UNCHANGED <<stellarVars, bridgeVars>>
       /\ Ethereum!Tick

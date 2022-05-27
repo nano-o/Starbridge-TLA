@@ -47,6 +47,11 @@ ExecuteTx == \E tx \in mempool :
     /\  UNCHANGED time
     /\  seqNum'[tx.src] \in SeqNum
 
+BumpSeqNum == \E a \in AccountId, n \in SeqNum :
+  /\ n >= seqNum[a]
+  /\ seqNum' = [seqNum EXCEPT ![a] = n]
+  /\ UNCHANGED <<time, mempool, executed>>
+
 TypeOkay ==
     /\  seqNum \in [AccountId -> SeqNum]
     /\  time \in Time
