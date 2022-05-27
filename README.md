@@ -1,4 +1,7 @@
-`StarbridgeEthToStellar.tla` contains a simple model of the Ethereum->Stellar deposit flow.
-This model in written in TLA+.
-The main property (`MainInvariant`) is that it's always true that more funds have been deposited in the bridge than have been taken out.
-This has been checked with the Apalache model-checker.
+Examples of checks that use a lot of memory and do not seem to terminate:
+
+`apalache-mc check --inv=MainInvariant --init=MainInvariant_ --length=0 StarbridgeEthToStellar.tla`
+
+Terminates but is slow (370 seconds on my laptop):
+
+`apalache-docker check --inv=Inv3 --init=Inv3_  --length=1 StarbridgeEthToStellar.tla`
