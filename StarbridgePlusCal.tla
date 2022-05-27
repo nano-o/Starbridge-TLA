@@ -1,6 +1,11 @@
------------------------------ MODULE Starbridge -----------------------------
+----------------------------- MODULE StarbridgePlusCal -----------------------------
 
-EXTENDS Naturals, Sequences, FiniteSets, TLC
+(***************************************************************************)
+(* This is a preliminary formalization of the Etherum->Stellar transfer    *)
+(* flow in Starbridge.                                                     *)
+(***************************************************************************)
+
+EXTENDS Naturals, Sequences, FiniteSets, TLC, Utils
 
 CONSTANTS
         User \* the set of users
@@ -22,6 +27,7 @@ ASSUME EthTxId = StellarTxId \* temporary assumption to make things simple
 
 \* What is the Stellar transaction corresponding to a bridge tranfer request?
 \* Below is a simple attempt at defining that.
+\* TODO Will the client will supply it? What about sending to someone else? 
 CorrespondingStellarTxId(request) ==
     request.id
 CorrespondingStellarTx(request) == [
@@ -29,14 +35,6 @@ CorrespondingStellarTx(request) == [
     from |-> BridgeStellarAddr,
     to |-> request.to,
     amount |-> request.amount]
-    
-RECURSIVE Sum(_,_)
-Sum(xs, acc) ==
-    IF xs = {}
-    THEN acc
-    ELSE 
-        LET x == CHOOSE x \in xs : TRUE
-        IN Sum(xs \ {x}, acc + x)
 
 (*
 --algorithm EthToStellar {
@@ -49,9 +47,9 @@ Sum(xs, acc) ==
         requests = [v \in Validator |-> {}], \* requests sent to bridge validators
         signatures = <<>>, \* map from Stellar transaction ID to validator that signed it
     define {
-        TotalAmount(txs) == 
+        TotalAmount(txs) ==
             LET amounts == {tx.amount : tx \in txs}
-            IN  Sum(amounts, 0) 
+            IN  Sum(amounts)
         BridgeEthBalance == \* sum amounts of all transactions to the bridge
             LET txs == {tx \in ethChain : tx.to = BridgeEthAddr}
             IN  TotalAmount(txs)
@@ -118,14 +116,14 @@ l0:     while (TRUE) {
     }
 }
 *)
-\* BEGIN TRANSLATION (chksum(pcal) = "4ef49d6" /\ chksum(tla) = "c9c81dd6")
-\* Label l0 of process sendToStellar at line 74 col 14 changed to l0_
+\* BEGIN TRANSLATION (chksum(pcal) = "4b1bcf13" /\ chksum(tla) = "8589d9ae")
+\* Label l0 of process sendToStellar at line 71 col 14 changed to l0_
 VARIABLES usedEthTxIds, ethChain, stellarChain, requests, signatures, pc
 
 (* define statement *)
 TotalAmount(txs) ==
     LET amounts == {tx.amount : tx \in txs}
-    IN  Sum(amounts, 0)
+    IN  Sum(amounts)
 BridgeEthBalance ==
     LET txs == {tx \in ethChain : tx.to = BridgeEthAddr}
     IN  TotalAmount(txs)
@@ -221,5 +219,5 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Mon May 09 20:26:17 PDT 2022 by nano
+\* Last modified Mon May 23 10:34:14 PDT 2022 by nano
 \* Created Mon Apr 11 15:36:08 PDT 2022 by nano

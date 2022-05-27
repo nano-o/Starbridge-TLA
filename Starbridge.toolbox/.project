@@ -20,5 +20,40 @@
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Starbridge.tla</locationURI>
 		</link>
+		<link>
+			<name>Stellar.tla</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Stellar.tla</locationURI>
+		</link>
+		<link>
+			<name>StellarClient.tla</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/StellarClient.tla</locationURI>
+		</link>
+		<link>
+			<name>StellarInstance1.tla</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/StellarInstance1.tla</locationURI>
+		</link>
+		<link>
+			<name>TestGuess.tla</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/TestGuess.tla</locationURI>
+		</link>
+		<link>
+			<name>TestInvariant.tla</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/TestInvariant.tla</locationURI>
+		</link>
+		<link>
+			<name>TypedStarbridge.tla</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/TypedStarbridge.tla</locationURI>
+		</link>
+		<link>
+			<name>Utils.tla</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Utils.tla</locationURI>
+		</link>
 	</linkedResources>
 </projectDescription>
