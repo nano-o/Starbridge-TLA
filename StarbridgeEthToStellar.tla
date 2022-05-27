@@ -93,6 +93,7 @@ SyncWithStellar ==
     /\  UNCHANGED <<ethereumVars, stellarVars, issuedWithdrawTx, lastWithdrawTx, refunded>>
 
 \* A withdraw transaction is irrevocably invalid when its time bound has ellapsed or the sequence number of the receiving account is higher than the transaction's sequence number
+\* Note that this is computed according to the bridge's last snapshot of the Stellar state (which might be stale).
 \* @type: (STELLAR_TX) => Bool;
 IrrevocablyInvalid(tx) ==
   \/  tx.maxTime < bridgeStellarTime
@@ -246,6 +247,12 @@ Inv3 == \A refund \in Ethereum!Executed :
       refund2.from = BridgeEthereumAccountId => \* if it's a refund:
         refund = refund2 \/ refund.refundId # refund2.refundId
 Inv3_ == TypeOkay /\ Inv0 /\ Inv3
+
+\* if a transaction is irrevocably invalid according to the bridge's snapshot of the Stellar state and it has been executed on Stellar , then it also has been executed according to the bridge's snapshot.
+Inv4 == \A tx \in stellarExecuted :
+  /\ tx.seq < stellarSeqNum[tx.src]
+  /\ IrrevocablyInvalid(tx) => tx \in bridgeStellarExecuted
+Inv4_ == TypeOkay /\ Inv1 /\ Inv4
 
 \* a refunded withdraw transaction that sits in the mempool is invalid:
 Inv6 == \A tx \in stellarMempool :
