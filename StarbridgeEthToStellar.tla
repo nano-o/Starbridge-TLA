@@ -1,17 +1,18 @@
 ------------------------------ MODULE StarbridgeEthToStellar ------------------------------
 
 \* TODO ideally, we would have a separate bridge module in which the private variables of the Stellar and Ethereum modules are not in scope
+\* TODO to help Apalache, we could implicitely assume that all transactions on Stellar are from the bridge account
 
 EXTENDS Integers, Apalache, FiniteSets, TLC
 
 \* @typeAlias: STELLAR_TX = [src : STELLAR_ACCNT, from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int, memo : HASH];
 \* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, stellarDst : STELLAR_ACCNT, hash : HASH, refundId : HASH];
 
-StellarAccountId == {"BRIDGE_OF_STELLAR_ACCNT","USER_OF_STELLAR_ACCNT"}
+StellarAccountId == {"BRIDGE_OF_STELLAR_ACCNT","USER_OF_STELLAR_ACCNT","USER2_OF_STELLAR_ACCNT"}
 EthereumAccountId == {"BRIDGE_OF_ETH_ACCNT","USER_OF_ETH_ACCNT","USER2_OF_ETH_ACCNT"}
 Amount == 1..1 \* transfer amounts
-SeqNum == 0..1
-Time == 0..1
+SeqNum == 0..1 \* we need at least two consecutive seqnums to be able to execute transactions on Stellar
+Time == 0..0
 WithdrawWindow == 1 \* time window the user has to execute a withdraw operation on Stellar
 (* Hash == {"0_OF_HASH","1_OF_HASH","2_OF_HASH","3_OF_HASH"} *)
 Hash == {"0_OF_HASH","1_OF_HASH","2_OF_HASH"}
@@ -144,11 +145,11 @@ RefundTx(tx, hash) == [
 
 SignRefundTransaction == \E tx \in Ethereum!Executed :
   /\  tx.to = BridgeEthereumAccountId
+  /\  tx.hash \notin bridgeRefunded
   /\  tx.hash \in bridgeIssuedWithdrawTx =>
         LET withdrawTx == bridgeLastWithdrawTx[tx.hash] IN
           /\  withdrawTx \notin bridgeStellarExecuted
           /\  IrrevocablyInvalid(withdrawTx)
-          /\  tx.hash \notin bridgeRefunded
   /\  \E hash \in Hash : Ethereum!ExecuteTx(RefundTx(tx, hash))
   /\  bridgeRefunded' = bridgeRefunded \union {tx.hash}
   /\  UNCHANGED <<stellarVars, bridgeIssuedWithdrawTx, bridgeLastWithdrawTx, bridgeChainsStateVars>>
@@ -239,6 +240,10 @@ Inv3 == \A refund \in Ethereum!Executed :
         /\ tx.hash = refund.refundId
         /\ tx.to = BridgeEthereumAccountId
         /\ tx.amount = refund.amount
+    \* and no two refunds are for the same transfer:
+    /\ \A refund2 \in Ethereum!Executed :
+      refund2.from = BridgeEthereumAccountId => \* if it's a refund:
+        refund = refund2 \/ refund.refundId # refund2.refundId
 Inv3_ == TypeOkay /\ Inv0 /\ Inv3
 
 \* a refunded withdraw transaction that sits in the mempool is invalid:
