@@ -265,7 +265,7 @@ Inv6_ == TypeOkay /\ Inv1 /\ Inv2 /\ Inv6
 Inv7 == \A tx \in stellarExecuted :
   tx.from = BridgeStellarAccountId => \* it's a withdraw
     tx.memo \notin refunded
-Inv7_ == TypeOkay /\ Inv1 /\ Inv2 /\ Inv6 /\ Inv7
+Inv7_ == TypeOkay /\ Inv1 /\ Inv2 /\ Inv4 /\ Inv6 /\ Inv7
 
 WithdrawTxs ==
   LET
