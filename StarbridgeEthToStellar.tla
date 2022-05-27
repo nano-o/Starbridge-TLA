@@ -143,15 +143,14 @@ RefundTx(tx, hash) == [
   hash |-> hash ]
 
 SignRefundTransaction == \E tx \in Ethereum!Executed :
-  /\  IF tx.hash \in bridgeIssuedWithdrawTx
-      THEN LET withdrawTx == bridgeLastWithdrawTx[tx.hash] IN
-        /\  withdrawTx \notin bridgeStellarExecuted
-        /\  IrrevocablyInvalid(withdrawTx)
-        /\  tx.hash \notin bridgeRefunded
-        /\  \E hash \in Hash : Ethereum!ExecuteTx(RefundTx(tx, hash))
-        /\  bridgeRefunded' = bridgeRefunded \union {tx.hash}
-      ELSE
-        UNCHANGED <<ethereumVars, bridgeRefunded>>
+  /\  tx.to = BridgeEthereumAccountId
+  /\  tx.hash \in bridgeIssuedWithdrawTx =>
+        LET withdrawTx == bridgeLastWithdrawTx[tx.hash] IN
+          /\  withdrawTx \notin bridgeStellarExecuted
+          /\  IrrevocablyInvalid(withdrawTx)
+          /\  tx.hash \notin bridgeRefunded
+  /\  \E hash \in Hash : Ethereum!ExecuteTx(RefundTx(tx, hash))
+  /\  bridgeRefunded' = bridgeRefunded \union {tx.hash}
   /\  UNCHANGED <<stellarVars, bridgeIssuedWithdrawTx, bridgeLastWithdrawTx, bridgeChainsStateVars>>
 
 UserInitiates ==
@@ -232,6 +231,28 @@ Inv3 == \A refund \in Ethereum!Executed :
       /\ tx.hash = refund.refundId
       /\ tx.to = BridgeEthereumAccountId
       /\ tx.amount = refund.amount
+Inv3_ == TypeOkay /\ Inv0 /\ Inv3
+
+Inv4 ==
+  /\  bridgeStellarTime <= stellarTime
+  /\  \A a \in StellarAccountId : bridgeStellarSeqNum[a] <= stellarSeqNum[a]
+Inv4_ == TypeOkay /\ Inv4
+
+Inv5 == \A tx \in stellarMempool :
+  /\ tx.memo \in bridgeIssuedWithdrawTx
+  /\ \/ tx = bridgeLastWithdrawTx[tx.memo]
+     \/ IrrevocablyInvalid(tx)
+Inv5_ == TypeOkay /\ Inv4 /\ Inv5
+
+Inv6 == \A hash \in bridgeRefunded :
+  \A tx \in stellarMempool : tx.memo = hash => IrrevocablyInvalid(tx)
+Inv6_ == TypeOkay /\ Inv4 /\ Inv5 /\ Inv6
+
+\* TODO:
+(* Inv7 == \A tx \in stellarMempool \union stellarExecuted : *)
+  (* tx.from = BridgeStellarAccountId => *)
+    (* tx.memo \notin bridgeRefunded *)
+(* Inv7_ == TypeOkay /\ Inv0 /\ Inv1 /\ Inv2 /\ Inv3 *)
 
 \* Funds deposited in the bridge account always exceed or are equal to the funds taken out:
 MainInvariant ==
