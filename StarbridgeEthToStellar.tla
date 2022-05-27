@@ -1,8 +1,8 @@
 ------------------------------ MODULE StarbridgeEthToStellar ------------------------------
 
 \* TODO ideally, we would have a separate bridge module in which the private variables of the Stellar and Ethereum modules are not in scope
-\* TODO Apalache chokes with 3 user accounts on both sides...
 \* TODO to help Apalache, we could implicitely assume that all transactions on Stellar are from the bridge account; on the Ethereum side, we could have a transfer/refund flag
+\* TODO there is a counterexample to Inv7 because there's no invariant preventing the bridge's view on the state of Stellar to be inconsistent (i.e. not correspond to any past snapshot).
 
 EXTENDS Integers, Apalache
 
@@ -226,9 +226,9 @@ Inv2 == \A tx \in stellarMempool \union stellarExecuted :
       /\ ethTx.hash = tx.memo
       /\ ethTx.to = BridgeEthereumAccountId
       /\ ethTx.amount = tx.amount
-    \* if it's not the last issued withdrawal for a given hash, then it is irrevocably invalid:
+    \* if it's not the last issued withdrawal for a given hash, then it is irrevocably invalid and not executed:
     /\ \/ tx = lastWithdrawTx[tx.memo]
-       \/ IrrevocablyInvalid(tx)
+       \/ IrrevocablyInvalid(tx) /\ tx \notin stellarExecuted
 Inv2_ == TypeOkay /\ Inv2 /\ Inv1
 
 \* properties of refund transactions:
@@ -258,7 +258,7 @@ Inv6_ == TypeOkay /\ Inv1 /\ Inv2 /\ Inv6
 Inv7 == \A tx \in stellarExecuted :
   tx.from = BridgeStellarAccountId => \* it's a withdraw
     tx.memo \notin refunded
-Inv7_ == TypeOkay /\ Inv2 /\ Inv6 /\ Inv7
+Inv7_ == TypeOkay /\ Inv1 /\ Inv2 /\ Inv6 /\ Inv7
 
 WithdrawTxs ==
   LET
