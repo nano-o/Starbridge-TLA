@@ -291,7 +291,7 @@ MainInvariant__ == \* check MainInvariant__ => MainInvariant
 
 \* Instead we'll check the following two properties:
 \* Every withdraw and refund has a matching deposit.
-\* Every deposit has at most on matching withdraw or refund.
+\* Every deposit has at most one matching withdraw or refund.
 
 \* Every withdraw and refund has a matching deposit.
 Inv9 ==
@@ -311,7 +311,7 @@ Inv9_ ==
 Inv9__ == \* we have Inv9__ => Inv9
   TypeOkay /\ Inv1 /\ Inv2 /\ Inv3 /\ Inv4
 
-\* Every deposit has at most on matching withdraw or refund.
+\* Every deposit has at most one matching withdraw or refund.
 Inv10 ==
   /\ \A stellarTx \in stellarExecuted, ethTx \in Ethereum!Executed :
     /\ stellarTx.from = BridgeStellarAccountId
