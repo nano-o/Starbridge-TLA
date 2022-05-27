@@ -8,13 +8,13 @@ EXTENDS Integers, Apalache, FiniteSets, TLC
 \* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, stellarDst : STELLAR_ACCNT, hash : HASH, refundId : HASH];
 
 StellarAccountId == {"BRIDGE_OF_STELLAR_ACCNT","USER_OF_STELLAR_ACCNT"}
-EthereumAccountId == {"BRIDGE_OF_ETH_ACCNT","USER_OF_ETH_ACCNT"}
-Amount == 0..1
+EthereumAccountId == {"BRIDGE_OF_ETH_ACCNT","USER_OF_ETH_ACCNT","USER2_OF_ETH_ACCNT"}
+Amount == 1..1 \* transfer amounts
 SeqNum == 0..1
 Time == 0..1
 WithdrawWindow == 1 \* time window the user has to execute a withdraw operation on Stellar
 (* Hash == {"0_OF_HASH","1_OF_HASH","2_OF_HASH","3_OF_HASH"} *)
-Hash == {"0_OF_HASH","1_OF_HASH"}
+Hash == {"0_OF_HASH","1_OF_HASH","2_OF_HASH"}
 
 BridgeStellarAccountId == "BRIDGE_OF_STELLAR_ACCNT"
 BridgeEthereumAccountId == "BRIDGE_OF_ETH_ACCNT"
@@ -204,61 +204,74 @@ StellarWithdrawals ==
   IN
     ApaFoldSet(Step, 0, stellarExecuted)
 
+\* uniqueness of hashes:
 Inv0 == Ethereum!Inv
 Inv0_ == TypeOkay /\ Inv0
 
-TransactionFromHash(h) ==
-  CHOOSE tx \in Ethereum!Executed :
-    tx.hash = h
+\* time and sequence numbers are monotonic:
+Inv1 ==
+  /\  bridgeStellarTime <= stellarTime
+  /\  \A a \in StellarAccountId : bridgeStellarSeqNum[a] <= stellarSeqNum[a]
+Inv1_ == TypeOkay /\ Inv1
 
-Inv1 == \A h \in bridgeRefunded :
-  \E tx \in Ethereum!Executed :
-    /\ tx.hash = h
-    /\ \E h2 \in Hash : RefundTx(tx, h2) \in Ethereum!Executed
-Inv1_ == TypeOkay /\ Inv0 /\ Inv1
-
+\* properties of withdraw transactions:
 Inv2 == \A tx \in stellarMempool \union stellarExecuted :
-  tx.from = BridgeStellarAccountId =>
-    \E ethTx \in Ethereum!Executed:
+  tx.from = BridgeStellarAccountId => \* it's a withdraw
+    \* the withdraw has been recorded by the bridge:
+    /\  tx.memo \in bridgeIssuedWithdrawTx
+    \* the withdraw has a corresponding initiating transaction:
+    /\ \E ethTx \in Ethereum!Executed:
       /\ ethTx.hash = tx.memo
       /\ ethTx.to = BridgeEthereumAccountId
       /\ ethTx.amount = tx.amount
-Inv2_ == TypeOkay /\ Inv2
+    \* if it's not the last issued withdrawal for a given hash, then it is irrevocably invalid:
+    /\ \/ tx = bridgeLastWithdrawTx[tx.memo]
+       \/ IrrevocablyInvalid(tx)
+Inv2_ == TypeOkay /\ Inv2 /\ Inv1
 
+\* properties of refund transactions:
 Inv3 == \A refund \in Ethereum!Executed :
   refund.from = BridgeEthereumAccountId => \* if it's a refund:
-    \E tx \in Ethereum!Executed :
-      /\ tx.hash = refund.refundId
-      /\ tx.to = BridgeEthereumAccountId
-      /\ tx.amount = refund.amount
+    \* the refund is recorded by the bridge:
+    /\ refund.refundId \in bridgeRefunded
+    \* the refund has a corresponding initiating transaction:
+    /\ \E tx \in Ethereum!Executed :
+        /\ tx.hash = refund.refundId
+        /\ tx.to = BridgeEthereumAccountId
+        /\ tx.amount = refund.amount
 Inv3_ == TypeOkay /\ Inv0 /\ Inv3
 
-Inv4 ==
-  /\  bridgeStellarTime <= stellarTime
-  /\  \A a \in StellarAccountId : bridgeStellarSeqNum[a] <= stellarSeqNum[a]
-Inv4_ == TypeOkay /\ Inv4
+\* a refunded withdraw transaction that sits in the mempool is invalid:
+Inv6 == \A tx \in stellarMempool :
+  /\ tx.from = BridgeStellarAccountId \* it's a withdraw
+  /\ tx.memo \in bridgeRefunded \* it's been refunded
+  => IrrevocablyInvalid(tx)
+Inv6_ == TypeOkay /\ Inv1 /\ Inv2 /\ Inv6
 
-Inv5 == \A tx \in stellarMempool :
-  /\ tx.memo \in bridgeIssuedWithdrawTx
-  /\ \/ tx = bridgeLastWithdrawTx[tx.memo]
-     \/ IrrevocablyInvalid(tx)
-Inv5_ == TypeOkay /\ Inv4 /\ Inv5
+\* an executed withdrawal cannot be refunded:
+Inv7 == \A tx \in stellarExecuted :
+  tx.from = BridgeStellarAccountId => \* it's a withdraw
+    tx.memo \notin bridgeRefunded
+Inv7_ == TypeOkay /\ Inv2 /\ Inv6 /\ Inv7
 
-Inv6 == \A hash \in bridgeRefunded :
-  \A tx \in stellarMempool : tx.memo = hash => IrrevocablyInvalid(tx)
-Inv6_ == TypeOkay /\ Inv4 /\ Inv5 /\ Inv6
+WithdrawTxs ==
+  LET
+    \* @type: Set(STELLAR_TX);
+    all == { bridgeLastWithdrawTx[h] : h \in Hash }
+  IN
+    {tx \in all : tx.memo \in bridgeIssuedWithdrawTx}
 
-\* TODO:
-(* Inv7 == \A tx \in stellarMempool \union stellarExecuted : *)
-  (* tx.from = BridgeStellarAccountId => *)
-    (* tx.memo \notin bridgeRefunded *)
-(* Inv7_ == TypeOkay /\ Inv0 /\ Inv1 /\ Inv2 /\ Inv3 *)
+\* there's at most one executed withdrawal per transfer:
+Inv8 == \A tx1 \in stellarExecuted :
+  /\ tx1.from = BridgeStellarAccountId => tx1 = bridgeLastWithdrawTx[tx1.memo]
+  /\ \A tx2 \in stellarExecuted :
+    tx1.from = BridgeStellarAccountId /\ tx2.from = BridgeStellarAccountId =>
+      tx1 = tx2 \/ tx1.memo # tx2.memo
+Inv8_ == TypeOkay /\ Inv1 /\ Inv2 /\ Inv8
 
 \* Funds deposited in the bridge account always exceed or are equal to the funds taken out:
 MainInvariant ==
   /\ EthBridgeBalance - StellarWithdrawals >= 0
-MainInvariant_ ==
-  /\ TypeOkay
-  /\ Ethereum!Inv
-  /\ EthBridgeBalance - StellarWithdrawals >= 0
+MainInvariant_ == \* check MainInvariant_ => MainInvariant
+  TypeOkay /\ Inv0 /\ Inv2 /\ Inv3 /\ Inv7 /\ Inv8
 =============================================================================
