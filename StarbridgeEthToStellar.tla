@@ -324,7 +324,7 @@ Inv10 ==
     /\ tx # tx2
     => tx.depositId # tx2.depositId
 Inv10__ == \* we have Inv10__ => Inv10
-  TypeOkay /\ Inv1 /\ Inv2 /\ Inv3 /\ Inv4 /\ Inv6 /\ Inv7
+  TypeOkay /\ Inv1 /\ Inv2 /\ Inv3 /\ Inv4 /\ Inv6 /\ Inv7 /\ Inv8
 
 \* Canary:
 Inv11 == FALSE
