@@ -1,24 +1,20 @@
 ------------------------------ MODULE StarbridgeEthToStellar ------------------------------
 
-\* TODO write a compositional spec as a conjuntion
-\* TODO to help Apalache, we could implicitely assume that all transactions on Stellar are from the bridge account; on the Ethereum side, we could have a transfer/refund flag
-
 EXTENDS Integers, Apalache
 
 \* @typeAlias: STELLAR_TX = [src : STELLAR_ACCNT, from : STELLAR_ACCNT, to : STELLAR_ACCNT, amount : Int, seq : Int, maxTime : Int, depositId : HASH];
 \* @typeAlias: ETH_TX = [from : ETH_ACCNT, to : ETH_ACCNT, amount : Int, stellarDst : STELLAR_ACCNT, hash : HASH, depositId : HASH];
 
-StellarAccountId == {"BRIDGE_OF_STELLAR_ACCNT","USER_OF_STELLAR_ACCNT","USER2_OF_STELLAR_ACCNT"}
-EthereumAccountId == {"BRIDGE_OF_ETH_ACCNT","USER_OF_ETH_ACCNT","USER2_OF_ETH_ACCNT"}
-Amount == 1..1 \* transfer amounts
-SeqNum == 0..1 \* we need at least two consecutive seqnums to be able to execute transactions on Stellar
-Time == 0..0
-WithdrawWindow == 1 \* time window the user has to execute a withdraw operation on Stellar
-(* Hash == {"0_OF_HASH","1_OF_HASH","2_OF_HASH","3_OF_HASH"} *)
-Hash == {"0_OF_HASH","1_OF_HASH","2_OF_HASH"}
-
-BridgeStellarAccountId == "BRIDGE_OF_STELLAR_ACCNT"
-BridgeEthereumAccountId == "BRIDGE_OF_ETH_ACCNT"
+CONSTANTS
+  StellarAccountId,
+  EthereumAccountId,
+  Amount,
+  SeqNum,
+  Time,
+  WithdrawWindow, \* time window the user has to execute a withdraw operation on Stellar
+  Hash,
+  BridgeStellarAccountId,
+  BridgeEthereumAccountId
 
 VARIABLES
     \* state of Stellar and Ethereum:
@@ -108,16 +104,16 @@ TxTime(tx) == CHOOSE t \in Time : tx \in ethereumExecuted[t]
 \* But what is the current time?
 \* Initially it can be the time of the tx as recorded on ethereum, but what is it afterwards?
 \* For now, we use previousTx.maxTime+WithdrawWindow
-SignWithdrawTransaction == \E tx \in Ethereum!Executed :
+EmitWithdrawTransaction == \E tx \in Ethereum!Executed :
   /\  tx.to = BridgeEthereumAccountId
   /\  tx.hash \notin refunded
   /\  tx.hash \in issuedWithdrawTx
       => LET withdrawTx == lastWithdrawTx[tx.hash] IN
-           /\ \neg withdrawTx \in bridgeStellarExecuted
+           /\ withdrawTx \notin bridgeStellarExecuted
            /\ IrrevocablyInvalid(withdrawTx)
   /\ \E seqNum \in SeqNum  : \* chosen by the client
       LET timeBound ==
-            IF \neg tx.hash \in issuedWithdrawTx
+            IF tx.hash \notin issuedWithdrawTx
               THEN TxTime(tx)+WithdrawWindow
               ELSE lastWithdrawTx[tx.hash].maxTime+WithdrawWindow
           withdrawTx == [
@@ -144,7 +140,7 @@ RefundTx(tx, hash) == [
   depositId |-> tx.hash,
   hash |-> hash ]
 
-SignRefundTransaction == \E tx \in Ethereum!Executed :
+RefundDeposit == \E tx \in Ethereum!Executed :
   /\  tx.to = BridgeEthereumAccountId
   /\  tx.hash \notin refunded
   /\  tx.hash \in issuedWithdrawTx =>
@@ -155,8 +151,8 @@ SignRefundTransaction == \E tx \in Ethereum!Executed :
   /\  refunded' = refunded \union {tx.hash}
   /\  UNCHANGED <<stellarVars, issuedWithdrawTx, lastWithdrawTx, bridgeChainsStateVars>>
 
-UserInitiates ==
-  \* a client initiates a transfer on Ethereum:
+ReceiveDeposit ==
+  \* a client makes a deposit on Ethereum:
   /\ UNCHANGED <<stellarVars, bridgeVars>>
   /\ \E src \in EthereumAccountId \ {BridgeEthereumAccountId},
           x \in Amount \ {0}, dst \in StellarAccountId \ {BridgeStellarAccountId},
@@ -172,9 +168,9 @@ UserInitiates ==
 
 Next ==
     \/  SyncWithStellar
-    \/  UserInitiates
-    \/  SignWithdrawTransaction
-    \/  SignRefundTransaction
+    \/  ReceiveDeposit
+    \/  EmitWithdrawTransaction
+    \/  RefundDeposit
     \/ \* internal stellar transitions:
       /\ UNCHANGED <<ethereumVars, bridgeVars>>
       /\ \/  Stellar!Tick
