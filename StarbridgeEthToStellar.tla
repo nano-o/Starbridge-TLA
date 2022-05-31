@@ -81,6 +81,7 @@ TypeOkay ==
     /\  refunded \in SUBSET Hash
     /\  Stellar!TypeOkay /\ Ethereum!TypeOkay
 
+\* NOTE it is crucial that this be atomic (otherwise Inv4 may be violated, with disastrous consequences):
 SyncWithStellar ==
     /\  bridgeStellarTime' = stellarTime
     /\  bridgeStellarSeqNum' = stellarSeqNum
@@ -153,7 +154,6 @@ RefundDeposit == \E tx \in Ethereum!Executed :
 
 ReceiveDeposit ==
   \* a client makes a deposit on Ethereum:
-  /\ UNCHANGED <<stellarVars, bridgeVars>>
   /\ \E src \in EthereumAccountId \ {BridgeEthereumAccountId},
           x \in Amount \ {0}, dst \in StellarAccountId \ {BridgeStellarAccountId},
         hash \in Hash :
@@ -165,6 +165,7 @@ ReceiveDeposit ==
           hash |-> hash,
           depositId |-> hash ] \* depositId does not matter here
        IN  Ethereum!ExecuteTx(tx)
+  /\ UNCHANGED <<stellarVars, bridgeVars>>
 
 Next ==
     \/  SyncWithStellar

@@ -38,7 +38,7 @@ ExecuteTx(tx) ==
     /\  tx \notin Executed
     /\  tx.hash \notin UsedHashes
     /\  tx.amount >= 0
-    /\  tx.from # tx.to
+    /\  tx.from # tx.to \* TODO: remove that
     /\  executed' = [executed EXCEPT ![time] = @ \union {tx}]
     /\  UNCHANGED time
 

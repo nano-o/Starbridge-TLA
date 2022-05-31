@@ -26,6 +26,8 @@ VARIABLES
     mempool, \* pending mempool; that's the interface to the outer world
     executed \* executed transactions
 
+\* TODO: it's not so much the mempool that we need to model, but the fact that a user can submit a withdraw transaction at any time and accumulate them
+
 \* balance is a private variable
 \* mempool, executed, time, and seqNum are interface variables
 
