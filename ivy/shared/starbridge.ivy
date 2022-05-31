@@ -67,7 +67,7 @@ object stellar = {
         }
     }
 
-    # last ledger seen by the bridge:
+    # last ledger
     individual t:time_t # the ledger close time
     relation executed(TX:tx_t) # the set of transaction executed by the end of the ledger
     function seqnum(A:addr_t) : seqnum_t # the sequence number of each accounts
