@@ -132,6 +132,7 @@ object bridge = {
     # `h` when there exists an deposit transaction `tx` on ethereum and:
     # * the deposit has not been refunded, and
     # * if the bridge already signed a withdraw transaction `wtx` for this deposit, then `wtx` has not been executed and it's irrevocably invalid
+    # NOTE this allows a user that screwed up to request a new withdraw transaction (as long as it makes the previous one irrevocably invalid)
     action process_withdraw_request(h:ethereum.hash_t) returns (wtx:stellar.tx_t) = {
         local tx:ethereum.tx_t {
             assume tx.hash = h;
