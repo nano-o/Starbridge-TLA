@@ -7,7 +7,7 @@ instance count_t : unbounded_sequence
 instance time_t : unbounded_sequence
 
 object stellar = {
-    type addr_t
+    type addr_t # an address on Stellar
 }
 
 object ethereum = {
@@ -21,22 +21,20 @@ object ethereum = {
             from_ : addr_t,
             to : addr_t,
             amount : count_t,
-            stellar_dst : stellar.addr_t,
+            stellar_dst : stellar.addr_t, # when depositing to the bridge, this indicates which Stellar account the funds should be transferred to
             hash : ethereum.hash_t,
-            refund_id : ethereum.hash_t
+            refund_id : ethereum.hash_t # when the tx is a refund, this indicates which deposit is being refunded
         }
     }
 
-    # NOTE modeling time here is not useful at the moment
-    individual t:time_t
-    relation executed(T:time_t, TX:tx_t)
+    relation executed(TX:tx_t) # the set of executed transactions
 
+    # we simulate hashing by keeping track of the set of used hashes
     relation used(H:hash_t)
     definition used(H:hash_t) = exists TS,TX . executed(TS, TX) & tx_t.hash(TX) = H
 
     after init {
-        t := 0;
-        executed(TS, TX) := false;
+        executed(TX) := false;
     }
 
     action exec(tx:tx_t) = {
@@ -44,19 +42,12 @@ object ethereum = {
         local h:hash_t {
             assume ~used(h);
             tx.hash := h;
-            executed(t, tx) := true;
+            executed(tx) := true;
         }
     }
 
-    export action tick = {
-        local t2:time_t {
-            assume t2 > t;
-            t := t2;
-        }
-    }
-
-    invariant executed(T1, TX1) & executed(T2, TX2) & TX1 = TX2 -> T1 = T2
-    invariant executed(T1, TX1) & executed(T2, TX2) & TX1 ~= TX2 -> tx_t.hash(TX1) ~= tx_t.hash(TX2)
+    # no two different transactions have the same hash:
+    invariant executed(TX1) & executed(TX2) & TX1 ~= TX2 -> tx_t.hash(TX1) ~= tx_t.hash(TX2)
 }
 
 object stellar = {
@@ -70,16 +61,16 @@ object stellar = {
             from_ : addr_t, # 'from'  causes an error (is a keyword or something?)
             to : addr_t,
             amount : count_t,
-            deposit_id : ethereum.hash_t,
+            deposit_id : ethereum.hash_t, # the hash of the corresponding deposit on Ethereum
             max_time : time_t,
             seqnum : seqnum_t
         }
     }
 
-    # NOTE last ledger seen by the bridge:
-    individual t:time_t
-    relation executed(TX:tx_t)
-    function seqnum(A:addr_t) : seqnum_t
+    # last ledger seen by the bridge:
+    individual t:time_t # the ledger close time
+    relation executed(TX:tx_t) # the set of transaction executed by the end of the ledger
+    function seqnum(A:addr_t) : seqnum_t # the sequence number of each accounts
 
     after init {
         t := 0;
@@ -88,7 +79,6 @@ object stellar = {
     }
 
     action exec(tx:tx_t) = {
-        # require tx.amount > 0;
         if ( tx.seqnum = seqnum(tx.src)
             & t <= tx.max_time) {
             seqnum(tx.src) := seqnum_t.next(seqnum(tx.src));
@@ -112,10 +102,13 @@ object stellar = {
 }
 
 object bridge = {
-    individual ethereum_bridge_addr:ethereum.addr_t
-    individual stellar_bridge_addr:stellar.addr_t
-    relation last_withdraw_tx(H:ethereum.hash_t, TX:stellar.tx_t) # TODO: could this be a function?
-    relation refunded(H:ethereum.hash_t)
+    parameter ethereum_addr:ethereum.addr_t
+    parameter stellar_addr:stellar.addr_t
+
+    # last_withdraw_tx associates a deposit hash with the last withdraw transaction signed by the bridge for this deposit
+    relation last_withdraw_tx(H:ethereum.hash_t, TX:stellar.tx_t)
+    relation refunded(H:ethereum.hash_t) # the set of deposits that have been refunded
+    # the last Stellar ledger known to the bridge (can be stale):
     individual stellar_t : time_t
     function stellar_seqnum(A:stellar.addr_t) : stellar.seqnum_t
     relation stellar_executed(TX:stellar.tx_t)
@@ -127,36 +120,48 @@ object bridge = {
         last_withdraw_tx(H, TX) := false;
     }
 
+    # a Stellar transaction is irrevocably invalid when, according to the last
+    # ledger the bridge knows of, either a) its max time is strictly lower that
+    # the last close time or b) its sequence number of strictly lower than the
+    # sequence number of the source account.
     relation irrevocably_invalid(TX:stellar.tx_t)
     definition irrevocably_invalid(TX) =
         stellar.tx_t.max_time(TX) < stellar_t | stellar.tx_t.seqnum(TX) < stellar_seqnum(stellar.tx_t.src(TX))
 
+    # the bridge returns a signed withdraw transaction for a deposit with hash
+    # `h` when there exists an deposit transaction `tx` on ethereum and:
+    # * the deposit has not been refunded, and
+    # * if the bridge already signed a withdraw transaction `wtx` for this deposit, then `wtx` has not been executed and it's irrevocably invalid
     action process_withdraw_request(h:ethereum.hash_t) returns (wtx:stellar.tx_t) = {
         local tx:ethereum.tx_t {
             assume tx.hash = h;
             assume
-                  (exists T. ethereum.executed(T,tx))
-                & ethereum.tx_t.to(tx) = ethereum_bridge_addr
+                  ethereum.executed(tx)
+                & ethereum.tx_t.to(tx) = ethereum_addr
                 & ~refunded(tx.hash);
             assume last_withdraw_tx(tx.hash, TX) ->
                   ~stellar_executed(TX)
                 & irrevocably_invalid(TX);
-            wtx.from_ := stellar_bridge_addr;
+            wtx.from_ := stellar_addr;
             wtx.src := tx.stellar_dst;
             wtx.to  := tx.stellar_dst;
             wtx.amount := tx.amount;
             wtx.deposit_id := tx.hash;
+            # NOTE we leave wtx.max_time arbitrary
             last_withdraw_tx(tx.hash, TX) := TX = wtx;
         }
     }
 
+    # a deposit can be refunded when:
+    # * it has not been refunded already
+    # * every corresponding withdraw transaction signed by the bridge (if any) has not been executed and is irrevocably invalid
     action refund_deposit(h:ethereum.hash_t) = {
         assume ~refunded(h);
         local tx:ethereum.tx_t {
             assume tx.hash = h;
             assume
-                  (exists T. ethereum.executed(T,tx))
-                & ethereum.tx_t.to(tx) = ethereum_bridge_addr;
+                  ethereum.executed(T,tx)
+                & ethereum.tx_t.to(tx) = ethereum_addr;
             if (exists TX . last_withdraw_tx(h, TX)) {
                 # the last withdraw tx, if there is one, must be not executed and irrevocably invalid:
                 local wtx:stellar.tx_t {
@@ -166,7 +171,7 @@ object bridge = {
                 }
             };
             var refund_tx:ethereum.tx_t;
-            refund_tx.from_ := ethereum_bridge_addr;
+            refund_tx.from_ := ethereum_addr;
             refund_tx.amount := tx.amount;
             refund_tx.refund_id := h;
             refunded(h) := true;
@@ -174,8 +179,10 @@ object bridge = {
         };
     }
 
+    # the bridge syncs with Stellar
+    # NOTE there is no guarantee that the bridge is in sync with Stellar; the bridge can be arbitrarily late
     export action sync_with_stellar = {
-        # here we're directly accessing the state of the stellar object
+        # NOTE here we're directly accessing the state of the stellar object
         stellar_t := stellar.t;
         stellar_seqnum(A) := stellar.seqnum(A);
         stellar_executed(TX) := stellar.executed(TX);
@@ -184,6 +191,8 @@ object bridge = {
 
 object user = {
 
+    # this is the set of withdraw transactions signed by the bridge
+    # the user can accumulate them to try to achieve a double spend
     relation withdraw_txs(TX:stellar.tx_t)
 
     after init {
@@ -192,7 +201,7 @@ object user = {
 
     export action make_deposit(v: count_t) = {
         local tx : ethereum.tx_t {
-            require tx.from_ ~= bridge.ethereum_bridge_addr;
+            require tx.from_ ~= bridge.ethereum_addr;
             require tx.amount > 0;
             call ethereum.exec(tx);
         }
@@ -215,11 +224,12 @@ object user = {
     }
 }
 
+# next we prove that, regardless of how many users, addresses, transactions, etc. there are, the bridge's funds are always safe
 isolate invariants = {
     invariant bridge.stellar_t <= stellar.t
     invariant bridge.stellar_seqnum(A) <= stellar.seqnum(A)
     invariant (user.withdraw_txs(TX) | stellar.executed(TX)) ->
-          stellar.tx_t.from_(TX) = bridge.stellar_bridge_addr
+          stellar.tx_t.from_(TX) = bridge.stellar_addr
         & (exists TX2 . bridge.last_withdraw_tx(stellar.tx_t.deposit_id(TX), TX2))
         & ( bridge.last_withdraw_tx(stellar.tx_t.deposit_id(TX), TX)
           | bridge.irrevocably_invalid(TX))
@@ -234,21 +244,21 @@ isolate invariants = {
     invariant user.withdraw_txs(TX) & ~bridge.last_withdraw_tx(stellar.tx_t.deposit_id(TX), TX) -> bridge.irrevocably_invalid(TX) & ~stellar.executed(TX)
 
     # every withdraw transaction has a corresponding deposit:
-    invariant user.withdraw_txs(TX) -> exists T, ETX .
-          ethereum.executed(T, ETX)
+    invariant user.withdraw_txs(TX) -> ETX .
+          ethereum.executed(ETX)
         & ethereum.tx_t.hash(ETX) = stellar.tx_t.deposit_id(TX)
-        & ethereum.tx_t.to(ETX) = bridge.ethereum_bridge_addr
+        & ethereum.tx_t.to(ETX) = bridge.ethereum_addr
         & ethereum.tx_t.amount(ETX) = stellar.tx_t.amount(TX)
 
     # properties of refund transactions:
-    invariant ethereum.executed(T, RTX) & ethereum.tx_t.from_(RTX) = bridge.ethereum_bridge_addr ->
+    invariant ethereum.executed(RTX) & ethereum.tx_t.from_(RTX) = bridge.ethereum_addr ->
           bridge.refunded(ethereum.tx_t.refund_id(RTX))
-        & (exists T2, DTX . # a deposit tx
-            ethereum.executed(T2, DTX)
-            & ethereum.tx_t.to(DTX) = bridge.ethereum_bridge_addr
+        & (DTX . # a deposit tx
+            ethereum.executed(DTX)
+            & ethereum.tx_t.to(DTX) = bridge.ethereum_addr
             & ethereum.tx_t.amount(DTX) = ethereum.tx_t.amount(RTX)
             & ethereum.tx_t.refund_id(RTX) = ethereum.tx_t.hash(DTX))
-        & (ethereum.executed(T2, RTX2) & ethereum.tx_t.from_(RTX2) = bridge.ethereum_bridge_addr ->
+        & (ethereum.executed(RTX2) & ethereum.tx_t.from_(RTX2) = bridge.ethereum_addr ->
             RTX2 = RTX | ethereum.tx_t.refund_id(RTX) ~= ethereum.tx_t.refund_id(RTX2))
 
     # if a deposit is refunded, then all corresponding withdraw transactions are invalid and have not been executed
@@ -256,33 +266,33 @@ isolate invariants = {
         ~stellar.executed(TX) & bridge.irrevocably_invalid(TX)
 
     # an executed withdrawal cannot be refunded
-    invariant stellar.executed(TX) & stellar.tx_t.from_(TX) = bridge.stellar_bridge_addr ->
+    invariant stellar.executed(TX) & stellar.tx_t.from_(TX) = bridge.stellar_addr ->
         ~bridge.refunded(stellar.tx_t.deposit_id(TX))
 
     # now the main safety properties.
     # every withdraw has a matching deposit:
-    invariant stellar.executed(TX) -> exists T, ETX .
-          ethereum.executed(T, ETX)
+    invariant stellar.executed(TX) -> exists ETX .
+          ethereum.executed(ETX)
         & ethereum.tx_t.hash(ETX) = stellar.tx_t.deposit_id(TX)
-        & ethereum.tx_t.to(ETX) = bridge.ethereum_bridge_addr
+        & ethereum.tx_t.to(ETX) = bridge.ethereum_addr
         & ethereum.tx_t.amount(ETX) = stellar.tx_t.amount(TX)
     # every refund has a matching deposit:
-    invariant ethereum.executed(T, RTX) & ethereum.tx_t.from_(RTX) = bridge.ethereum_bridge_addr -> exists T2,DTX .
-          ethereum.executed(T2, DTX)
+    invariant ethereum.executed(RTX) & ethereum.tx_t.from_(RTX) = bridge.ethereum_addr -> exists DTX .
+          ethereum.executed(DTX)
         & ethereum.tx_t.hash(DTX) = ethereum.tx_t.refund_id(RTX)
-        & ethereum.tx_t.to(DTX) = bridge.ethereum_bridge_addr
+        & ethereum.tx_t.to(DTX) = bridge.ethereum_addr
         & ethereum.tx_t.amount(DTX) = ethereum.tx_t.amount(RTX)
     # withdraw and refund are mutually exclusive:
-    invariant ethereum.executed(T, TX) & ethereum.tx_t.from_(TX) = bridge.ethereum_bridge_addr
-        & stellar.executed(WTX) & stellar.tx_t.from_(WTX) = bridge.stellar_bridge_addr ->
+    invariant ethereum.executed(TX) & ethereum.tx_t.from_(TX) = bridge.ethereum_addr
+        & stellar.executed(WTX) & stellar.tx_t.from_(WTX) = bridge.stellar_addr ->
             stellar.tx_t.deposit_id(WTX) ~= ethereum.tx_t.refund_id(TX)
     # every deposit has at most one matching refund
-    invariant ethereum.executed(T1, TX1) & ethereum.tx_t.from_(TX1) = bridge.ethereum_bridge_addr
-        & ethereum.executed(T2, TX2) & ethereum.tx_t.from_(TX2) = bridge.ethereum_bridge_addr ->
+    invariant ethereum.executed(TX1) & ethereum.tx_t.from_(TX1) = bridge.ethereum_addr
+        & ethereum.executed(TX2) & ethereum.tx_t.from_(TX2) = bridge.ethereum_addr ->
             TX1 = TX2 | ethereum.tx_t.refund_id(TX1) ~= ethereum.tx_t.refund_id(TX2)
     # every deposit has at most one matching withdrawal
-    invariant stellar.executed(TX1) & stellar.tx_t.from_(TX1) = bridge.stellar_bridge_addr
-        & stellar.executed(TX2) & stellar.tx_t.from_(TX2) = bridge.stellar_bridge_addr ->
+    invariant stellar.executed(TX1) & stellar.tx_t.from_(TX1) = bridge.stellar_addr
+        & stellar.executed(TX2) & stellar.tx_t.from_(TX2) = bridge.stellar_addr ->
             TX1 = TX2 | stellar.tx_t.deposit_id(TX1) ~= stellar.tx_t.deposit_id(TX2)
 
 } with time_t, stellar, ethereum, bridge, user, count_t, stellar.seqnum_t
