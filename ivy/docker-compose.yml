@@ -1,18 +1,28 @@
 version: '3'
 services:
-  starbridge-ivy:
+  starbridge-ivy-dev:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     volumes:
       - ./shared:/home/user/shared:rw
     command: /bin/bash
     stdin_open: true # docker run -i
     tty: true        # docker run -t
-    container_name: starbridge-ivy
+    container_name: starbridge-ivy-dev
     security_opt:
         - seccomp:unconfined
     cap_add:
         - SYS_PTRACE
     environment:
       TERM: xterm-256color
+  starbridge-ivy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./shared:/home/user/shared:rw
+    command: ivy_check complete=fo /home/user/shared/starbridge.ivy
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
+    container_name: starbridge-ivy
