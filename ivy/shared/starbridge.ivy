@@ -31,14 +31,13 @@ object ethereum = {
 
     # we simulate hashing by keeping track of the set of used hashes
     relation used(H:hash_t)
-    definition used(H:hash_t) = exists TS,TX . executed(TS, TX) & tx_t.hash(TX) = H
+    definition used(H:hash_t) = exists TX . executed(TX) & tx_t.hash(TX) = H
 
     after init {
         executed(TX) := false;
     }
 
     action exec(tx:tx_t) = {
-        var h:hash_t;
         local h:hash_t {
             assume ~used(h);
             tx.hash := h;
@@ -161,7 +160,7 @@ object bridge = {
         local tx:ethereum.tx_t {
             assume tx.hash = h;
             assume
-                  ethereum.executed(T,tx)
+                  ethereum.executed(tx)
                 & ethereum.tx_t.to(tx) = ethereum_addr;
             if (exists TX . last_withdraw_tx(h, TX)) {
                 # the last withdraw tx, if there is one, must be not executed and irrevocably invalid:
@@ -246,7 +245,7 @@ isolate invariants = {
     invariant user.withdraw_txs(TX) & ~bridge.last_withdraw_tx(stellar.tx_t.deposit_id(TX), TX) -> bridge.irrevocably_invalid(TX) & ~stellar.executed(TX)
 
     # every withdraw transaction has a corresponding deposit:
-    invariant user.withdraw_txs(TX) -> ETX .
+    invariant user.withdraw_txs(TX) -> exists ETX .
           ethereum.executed(ETX)
         & ethereum.tx_t.hash(ETX) = stellar.tx_t.deposit_id(TX)
         & ethereum.tx_t.to(ETX) = bridge.ethereum_addr
@@ -255,7 +254,7 @@ isolate invariants = {
     # properties of refund transactions:
     invariant ethereum.executed(RTX) & ethereum.tx_t.from_(RTX) = bridge.ethereum_addr ->
           bridge.refunded(ethereum.tx_t.refund_id(RTX))
-        & (DTX . # a deposit tx
+        & (exists DTX . # a deposit tx
             ethereum.executed(DTX)
             & ethereum.tx_t.to(DTX) = bridge.ethereum_addr
             & ethereum.tx_t.amount(DTX) = ethereum.tx_t.amount(RTX)
