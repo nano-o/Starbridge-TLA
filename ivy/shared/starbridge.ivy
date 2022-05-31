@@ -182,6 +182,7 @@ object bridge = {
 
     # the bridge syncs with Stellar
     # NOTE there is no guarantee that the bridge is in sync with Stellar; the bridge can be arbitrarily late
+    # NOTE it is very important that this be done atomically; e.g., updating the ledger close time without updating the set of executed transactions would open an opportunity for a double spend.
     export action sync_with_stellar = {
         # NOTE here we're directly accessing the state of the stellar object
         stellar_t := stellar.t;
