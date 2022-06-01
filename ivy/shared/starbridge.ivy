@@ -57,6 +57,7 @@ object ethereum = {
 }
 
 object stellar = {
+    # TODO: add failed state
     ... # we continue the previous definition
     instance seqnum_t : unbounded_sequence
 
@@ -154,8 +155,7 @@ object bridge = {
             wtx.to  := tx.stellar_dst;
             wtx.amount := tx.amount;
             wtx.deposit_id := tx.hash;
-            wtx.max_time := *; # wtx.max_time is arbitrary; this shows that safety is not affected whatever choice is made
-            wtx.seqnum := *; # wtx.seqnum is arbitrary; this shows that safety is not affected whatever choice is made
+            # NOTE wtx.max_time and wtx.seqnum are left arbitrary
             last_withdraw_tx(tx.hash, TX) := TX = wtx;
         }
     }
@@ -245,9 +245,6 @@ isolate invariants = {
     invariant bridge.last_withdraw_tx(H, TX1) & bridge.last_withdraw_tx(H, TX2) -> TX1 = TX2
     invariant bridge.last_withdraw_tx(H, TX) -> stellar.tx_t.deposit_id(TX) = H
     invariant stellar.executed(TX) -> user.withdraw_txs(TX)
-    # TODO: the following is violated by the update at line 157, which seems to show that structs are buggy...
-    # otherwise it's a useless invariant
-    # invariant bridge.stellar_executed(TX) -> bridge.irrevocably_invalid(TX)
     # if the bridge thinks a transaction is irrevocably invalid and the bridge has not seen it executed, then it has not been executed:
     invariant bridge.irrevocably_invalid(TX) & ~bridge.stellar_executed(TX) -> ~stellar.executed(TX)
     invariant stellar.executed(TX) -> bridge.last_withdraw_tx(stellar.tx_t.deposit_id(TX), TX)
