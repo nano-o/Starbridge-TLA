@@ -1,5 +1,12 @@
 #lang ivy1.7
 
+# NOTES
+# - capitalized variables are implicitely universally quantified; thus `executed(TX:tx_t) := false` means `forall TX:tx_t . executed(TX) := false` (which means that the relation `executed` is empty)
+# - actions are atomic state transitions
+# - exported actions (declared with the `export` keyword) are actions that can be called by the environment at any time as long as all require preconditions are satisfied (keyword `require`)
+# - calling an action that results in violating a `require` statement is an error
+# - calling an action with parameters that violate an `assume` statement simply cannot happen (i.e. Ivy rules out such transactions from its analysis)
+
 include order
 
 # amount of tokens:
@@ -147,7 +154,8 @@ object bridge = {
             wtx.to  := tx.stellar_dst;
             wtx.amount := tx.amount;
             wtx.deposit_id := tx.hash;
-            # NOTE we leave wtx.max_time arbitrary
+            wtx.max_time := *; # wtx.max_time is arbitrary; this shows that safety is not affected whatever choice is made
+            wtx.seqnum := *; # wtx.seqnum is arbitrary; this shows that safety is not affected whatever choice is made
             last_withdraw_tx(tx.hash, TX) := TX = wtx;
         }
     }
@@ -157,7 +165,7 @@ object bridge = {
     # * every corresponding withdraw transaction signed by the bridge (if any) has not been executed and is irrevocably invalid
     action refund_deposit(h:ethereum.hash_t) = {
         assume ~refunded(h);
-        local tx:ethereum.tx_t {
+        local tx:ethereum.tx_t { # this is the corresponding deposit on Ethereum
             assume tx.hash = h;
             assume
                   ethereum.executed(tx)
@@ -237,7 +245,9 @@ isolate invariants = {
     invariant bridge.last_withdraw_tx(H, TX1) & bridge.last_withdraw_tx(H, TX2) -> TX1 = TX2
     invariant bridge.last_withdraw_tx(H, TX) -> stellar.tx_t.deposit_id(TX) = H
     invariant stellar.executed(TX) -> user.withdraw_txs(TX)
-    invariant bridge.stellar_executed(TX) -> bridge.irrevocably_invalid(TX)
+    # TODO: the following is violated by the update at line 157, which seems to show that structs are buggy...
+    # otherwise it's a useless invariant
+    # invariant bridge.stellar_executed(TX) -> bridge.irrevocably_invalid(TX)
     # if the bridge thinks a transaction is irrevocably invalid and the bridge has not seen it executed, then it has not been executed:
     invariant bridge.irrevocably_invalid(TX) & ~bridge.stellar_executed(TX) -> ~stellar.executed(TX)
     invariant stellar.executed(TX) -> bridge.last_withdraw_tx(stellar.tx_t.deposit_id(TX), TX)
