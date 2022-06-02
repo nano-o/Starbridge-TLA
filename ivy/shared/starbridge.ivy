@@ -6,6 +6,7 @@
 # - exported actions (declared with the `export` keyword) are actions that can be called by the environment at any time as long as all require preconditions are satisfied (keyword `require`)
 # - calling an action that results in violating a `require` statement is an error
 # - calling an action with parameters that violate an `assume` statement simply cannot happen (i.e. Ivy rules out such transactions from its analysis)
+# - `~` is negation; so, `assume ~used(h)` means that we assume that `h` is not in the `used` relation.
 
 include order
 
