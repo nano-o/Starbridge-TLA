@@ -114,20 +114,25 @@ invariant executed(T1, TX1) & executed(T2, TX2) -> T1 = T2 & TX1 = TX2
 
 ## supporting invariants:
 
+# pending transactions have sequence numbers lower or equal to the current sequence number of the receiving account:
+invariant pending(TX) -> withdraw_t.seqnum(TX) <= seqnum
+# if a withdraw is executed, then all the others pending withdraws have stale sequence numbers:
+invariant executed(T1,TX1) & pending(TX2) & withdraw_t.seqnum(TX1) ~= withdraw_t.seqnum(TX2) -> withdraw_t.seqnum(TX2) < seqnum
+# if a withdraw has been executed with a seqnum that the bridge has seen, then the bridge knows it's executed:
+invariant executed(T1,TX1) & withdraw_t.seqnum(TX1) < bridge_seqnum -> T1 <= bridge_ledger
+# the bridge is in sync or late:
+invariant bridge_seqnum <= seqnum
+
 # no seqnum is assigned in the future:
 invariant seqnums(T,S) -> T <= t
-# `seqnums` is a functional relation:
-invariant seqnums(T,S1) & seqnums(T,S2) -> S1 = S2
 # sequence numbers only grow:
 invariant seqnums(T1,S1) & seqnums(T2,S2) & T1 < T2 -> S1 <= S2
 # `seqnum` is the sequence number of the receiving account at the end of the last ledger:
 invariant seqnums(t,seqnum)
-
-# pending transactions have sequence numbers lower or equal to the current sequence number of the receiving account:
-invariant pending(TX) -> withdraw_t.seqnum(TX) <= seqnum
-
 # no transaction is executed in the future:
 invariant executed(T,TX) -> T <= t
+# a ledger determines a seqnum:
+invariant seqnums(T,S1) & seqnums(T,S2) -> S1 = S2
 
 # all pending withdrawals have a max time lower than `end_withdraw_period`:
 invariant pending(TX) -> withdraw_t.max_time(TX) <= end_withdraw_period
@@ -138,14 +143,6 @@ invariant refunded -> t > end_withdraw_period
 invariant executed(T,TX) & seqnums(T,S) -> withdraw_t.seqnum(TX) < S
 invariant executed(T2,TX) & seqnums(T1,S) & T1 < T2 -> S <= withdraw_t.seqnum(TX)
 invariant executed(T1,TX) & seqnums(T2,S) & T1 < T2 -> withdraw_t.seqnum(TX) < S
-
-# if a withdraw is executed, then all the others pending withdraws are invalid
-invariant executed(T1,TX1) & pending(TX2) & withdraw_t.seqnum(TX1) ~= withdraw_t.seqnum(TX2) -> ~valid(TX2, t)
-
-# the bridge knows about past ledgers:
-invariant bridge_seqnum <= seqnum
-# if a withdraw has been executed with a seqnum that the bridge has seen, then the bridge knows it's executed:
-invariant executed(T1,TX1) & withdraw_t.seqnum(TX1) < bridge_seqnum -> T1 <= bridge_ledger
 
 ## Invariants that hold but are not needed to prove the main invariants:
 
