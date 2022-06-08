@@ -1,14 +1,14 @@
 #lang ivy1.7
 
 # NOTES
-# - capitalized variables are implicitely universally quantified; thus `executed(TX:tx_t) := false` means `forall TX:tx_t . executed(TX) := false` (which means that the relation `executed` is empty)
 # - actions are atomic state transitions
+# - capitalized variables are implicitely universally quantified; thus `executed(TX:tx_t) := false` means `forall TX:tx_t . executed(TX) := false` (which means that the relation `executed` is empty)
 # - exported actions (declared with the `export` keyword) are actions that can be called by the environment at any time as long as all require preconditions are satisfied (keyword `require`)
 # - calling an action that results in violating a `require` statement is an error
 # - calling an action with parameters that violate an `assume` statement simply cannot happen (i.e. Ivy rules out such transactions from its analysis)
 # - `~` is negation; so, `assume ~used(h)` means that we assume that `h` is not in the `used` relation.
 
-include order
+include order # from standard Ivy library (ivy/include/1.7/order.ivy)
 
 # amount of tokens:
 instance count_t : unbounded_sequence
@@ -19,6 +19,7 @@ object stellar = {
 }
 
 object ethereum = {
+    # TODO two separate `submit` and `execute` actions?
 
     type addr_t # an address
     type hash_t # a transaction hash
@@ -58,7 +59,7 @@ object ethereum = {
 }
 
 object stellar = {
-    # TODO: add failed state
+    # TODO two separate `submit` and `execute` actions?
     ... # we continue the previous definition
     instance seqnum_t : unbounded_sequence
 
@@ -171,13 +172,11 @@ object bridge = {
             assume
                   ethereum.executed(tx)
                 & ethereum.tx_t.to(tx) = ethereum_addr;
-            if (exists TX . last_withdraw_tx(h, TX)) {
-                # the last withdraw tx, if there is one, must be not executed and irrevocably invalid:
-                local wtx:stellar.tx_t {
-                    assume last_withdraw_tx(h, wtx);
-                    assume ~stellar_executed(wtx);
-                    assume irrevocably_invalid(wtx);
-                }
+            if some (wtx:stellar.tx_t) last_withdraw_tx(h, wtx) {
+                # the last withdraw transaction wtx, if there is one, must be not executed and irrevocably invalid:
+                assume last_withdraw_tx(h, wtx);
+                assume ~stellar_executed(wtx);
+                assume irrevocably_invalid(wtx);
             };
             var refund_tx:ethereum.tx_t;
             refund_tx.from_ := ethereum_addr;
