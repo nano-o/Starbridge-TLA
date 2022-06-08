@@ -1,6 +1,7 @@
 # Starbridge
 
-This repository contains formal models related to the Starbridge project.
+This repository contains formal models related to the
+[Starbridge](https://github.com/stellar/starbridge) project.
 
 Notably,
 [starbridge.ivy](https://github.com/nano-o/Starbridge/blob/main/ivy/shared/starbridge.ivy)
