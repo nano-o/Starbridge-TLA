@@ -1,0 +1,75 @@
+#lang ivy1.7
+
+# Model of Starbridge; timelock version.
+
+# There is a withdrawal period followed by a non-overlapping refund period.
+# Withdrawal txs can be re-issued (allows a user that screwed up its sequence number to retry).
+# We model injestion of transactions and restarting from a blank DB.
+
+# TODO
+# - Is it important to not skip sequence numbers? Probably not.
+
+include order # from standard Ivy library (ivy/include/1.7/order.ivy)
+
+# amount of tokens:
+instance count_t : unbounded_sequence
+instance time_t : unbounded_sequence
+
+# We take a very minimalist approach where we consider a single transfer. Thus the only thing we care
+# about on the ethereum side is whether it has been refunded or not (that's because we assume that the
+# Ethereum contract protects against double refunds).
+
+# whether the transfer has been refunded:
+individual refunded:bool
+# the time at which the transfer starts; arbitrary but constant
+individual initiation_time:time_t
+
+action refund = {
+        refunded := true
+}
+
+instance seqnum_t : unbounded_sequence
+
+# a transaction from the bridge to the receiving account:
+object tx_t = {
+    type this = struct {
+        max_time : time_t,
+        seqnum : seqnum_t
+    }
+}
+
+# pending transactions:
+relation pending(TX:tx_t)
+individual t:time_t # last ledger close time on Stellar
+# executed transactions and their execution time:
+relation executed(T:time_t, TX:tx_t)
+# changes of sequence number of the receiving account:
+relation seqnum(T:time_t, S:seqnum_t)
+
+after init {
+    pending(TX) := false;
+    t := 0;
+    executed(T,TX) := false;
+    seqnum(T,S) := T=0 & S=0;
+}
+
+relation valid(TX:tx_t)
+definition valid(tx:tx_t) = seqnum(t, tx.seqnum) & t <= tx.max_time
+
+# execute a transaction
+# for now, we execute only one transaction at a time
+export action exec(new_t:time_t, tx:tx_t) = {
+    require new_t > t;
+    require pending(tx) & valid(tx);
+    executed(new_t, tx) := true;
+    # increase seqnum
+    local last_seqnum:seqnum_t, new_seqnum:seqnum_t {
+        assume seqnum(t, last_seqnum);
+        assume new_seqnum > last_seqnum;
+        seqnum(new_t, new_seqnum) := true;
+    };
+    t := new_t;
+}
+
+invariant T > t -> ~seqnum(T,S)
+invariant seqnum(T,S1) & seqnum(T,S2) -> S1 = S2
