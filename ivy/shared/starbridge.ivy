@@ -1,12 +1,12 @@
 #lang ivy1.7
 
-# NOTES
+# Notes on Ivy:
 # - actions are atomic state transitions
-# - capitalized variables are implicitely universally quantified; thus `executed(TX:tx_t) := false` means `forall TX:tx_t . executed(TX) := false` (which means that the relation `executed` is empty)
 # - exported actions (declared with the `export` keyword) are actions that can be called by the environment at any time as long as all require preconditions are satisfied (keyword `require`)
+# - capitalized variables are implicitely universally quantified; thus `executed(TX:tx_t) := false` means `forall TX:tx_t . executed(TX) := false` (which means that the relation `executed` is empty)
+# - `~` is negation; so, `assume ~used(h)` means that we assume that `h` is not in the `used` relation.
 # - calling an action that results in violating a `require` statement is an error
 # - calling an action with parameters that violate an `assume` statement simply cannot happen (i.e. Ivy rules out such transactions from its analysis)
-# - `~` is negation; so, `assume ~used(h)` means that we assume that `h` is not in the `used` relation.
 
 include order # from standard Ivy library (ivy/include/1.7/order.ivy)
 
@@ -46,7 +46,7 @@ object ethereum = {
         executed(TX) := false;
     }
 
-    action exec(tx:tx_t) = {
+    action exec(tx:tx_t, h:hash_t) = {
         local h:hash_t {
             assume ~used(h);
             tx.hash := h;
@@ -95,15 +95,14 @@ object stellar = {
         }
     }
 
-    export action tick = {
-        t := time_t.next(t);
+    export action tick(new_time:time_t) = {
+        require new_time > t;
+        t := new_time;
     }
 
-    export action bump_seqnum(a:addr_t) = {
-        local sn:seqnum_t {
-            assume seqnum(a) < sn;
-            seqnum(a) := sn;
-        }
+    export action bump_seqnum(a:addr_t, sn:seqnum_t) = {
+        require seqnum(a) < sn;
+        seqnum(a) := sn;
     }
 
     # NOTE this invariant was missing in the TLA specification
