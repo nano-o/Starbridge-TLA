@@ -27,8 +27,11 @@ WORKDIR /home/user/ivy/
 RUN git checkout 2to3
 RUN python3 setup.py develop --user
 
+RUN mkdir /home/user/bin/
 ENV PATH=/home/user/.local/bin:/home/user/bin:${PATH}
-
-WORKDIR /home/user/
+COPY --chown=user:user plot_dependencies.sh /home/user/bin/plot_dependencies.sh
+RUN chmod +x /home/user/bin/plot_dependencies.sh
+COPY --chown=user:user check_invariants.sh /home/user/bin/check_invariants.sh
+RUN chmod +x /home/user/bin/check_invariants.sh
 
 CMD ivy_check

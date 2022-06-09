@@ -16,13 +16,34 @@ services:
         - SYS_PTRACE
     environment:
       TERM: xterm-256color
+
   starbridge-ivy:
     build:
       context: .
       dockerfile: Dockerfile
     volumes:
       - ./shared:/home/user/shared:rw
-    command: ivy_check complete=fo /home/user/shared/starbridge.ivy
-    stdin_open: true # docker run -i
+    command: check_invariants.sh $IVY_FILE
     tty: true        # docker run -t
     container_name: starbridge-ivy
+
+  starbridge-ivy-python2:
+    build:
+      context: .
+      dockerfile: Dockerfile.python2
+    volumes:
+      - ./shared:/home/user/shared:rw
+    command: /bin/bash
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
+    container_name: starbridge-ivy-python2
+
+  starbridge-ivy-poisonivy:
+    build:
+      context: .
+      dockerfile: Dockerfile.python2
+    volumes:
+      - ./shared:/home/user/shared:rw
+    command: plot_dependencies.sh $IVY_FILE
+    tty: true        # docker run -t
+    container_name: starbridge-ivy-poisonivy
