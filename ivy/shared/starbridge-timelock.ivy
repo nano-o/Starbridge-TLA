@@ -159,14 +159,16 @@ export action refund = {
     refunded := true;
 }
 
-## the main invariants:
+# The main invariants:
+# --------------------
 
 # a withdrawal cannot be both executed and refunded:
 invariant ~(refunded & exists T, TX. executed(T,TX))
 # no double withdrawals:
 invariant executed(T1, TX1) & executed(T2, TX2) -> T1 = T2 & TX1 = TX2
 
-## supporting invariants:
+# Supporting invariants:
+# ----------------------
 
 # pending transactions have sequence numbers lower or equal to the current sequence number of the receiving account:
 invariant pending(TX) -> withdraw_t.seqnum(TX) <= seqnum
@@ -202,7 +204,7 @@ invariant executed(T,TX) & seqnums(T,S) -> withdraw_t.seqnum(TX) < S
 invariant executed(T2,TX) & seqnums(T1,S) & T1 < T2 -> S <= withdraw_t.seqnum(TX)
 invariant executed(T1,TX) & seqnums(T2,S) & T1 < T2 -> withdraw_t.seqnum(TX) < S
 
-## Invariants that hold but are not needed to prove the main invariants:
+# Invariants that hold but are not needed to prove the main invariants:
 
 # invariant seqnums(T,S) -> S <= seqnum
 # invariant exists T . seqnums(T, bridge_seqnum)
