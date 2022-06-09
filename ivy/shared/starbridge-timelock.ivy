@@ -118,15 +118,12 @@ after init {
 }
 
 # The brigde processes ledgers up to `l`.
-# Setting `bridge_seqnum` is a little tricky. We need to find the last time `t_s` the sequence number `s` of the receiving account was updated.
 
 export action process_ledgers(l:time_t) = {
     require l <= t;
     bridge_ledger := l;
-    local s:seqnum_t, t_s:time_t {
-        assume seqnums(t_s, s);
-        assume t_s <= l;
-        assume t_s <= T & T <= l & seqnums(T,S) -> S = s;
+    local s:seqnum_t { # the seqnum of the receiving account as of ledger l
+        assume seqnums(l, s);
         bridge_seqnum := s;
     }
 }
@@ -169,11 +166,13 @@ export action refund = {
 
 # A withdrawal cannot be both executed and refunded:
 # --------------------------------------------------
+
 invariant ~(refunded & exists T, TX. executed(T,TX))
 
 # Supporting invariants:
 
 # no withdrawals are executed after the end of the withdraw period:
+
 invariant executed(T,TX) -> T <= end_withdraw_period
 # refunds only happend after the withdraw period:
 invariant refunded -> t > end_withdraw_period
