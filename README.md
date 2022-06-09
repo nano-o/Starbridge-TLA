@@ -20,7 +20,7 @@ IVY_FILE=starbridge-timelock.ivy docker-compose run --project-directory ivy/ --r
 To plot the dependencies between invariants:
 
 ```
-IVY_FILE=starbridge-timelock.ivy docker-compose run --rm starbridge-ivy-poisonivy
+IVY_FILE=starbridge-timelock.ivy docker-compose run  --project-directory ivy/ --rm starbridge-ivy-poisonivy
 ```
 
 You will then find a `png` file in `ivy/shared/`
