@@ -34,6 +34,7 @@ ENV PATH=$PATH:"/home/user/python/bin/"
 # also add poisonivy:
 WORKDIR /home/user/
 RUN git clone https://github.com/kach/poison-ivy.git
+RUN sed -i "s/'ivy_check',/'ivy_check',\ 'complete=fo',/g" /home/user/poison-ivy/poisonivy.py
 
 RUN mkdir /home/user/bin/
 ENV PATH=/home/user/.local/bin:/home/user/bin:${PATH}
