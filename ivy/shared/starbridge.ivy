@@ -46,7 +46,7 @@ object ethereum = {
         executed(TX) := false;
     }
 
-    action exec(tx:tx_t, h:hash_t) = {
+    action exec(tx:tx_t) = {
         local h:hash_t {
             assume ~used(h);
             tx.hash := h;
