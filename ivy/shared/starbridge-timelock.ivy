@@ -1,23 +1,40 @@
 #lang ivy1.7
 
 # Model of Starbridge; timelock version.
-# We take a very minimalist approach where we consider a single transfer.
 
-include order # from standard Ivy library (ivy/include/1.7/order.ivy)
+# In this model we consider a single transfer and a single bridge validator
+# (referred to as the bridge). For simplicity we do not model addresses,
+# amounts, hashes, etc.
 
-# amount of tokens:
+# Instead we focus on the core ideas: a) the refund timelock and b) the idea of
+# using the successor of the current sequence number of the receiving account
+# as the sequence number of a withdrawal transaction.
+
+# Include the order module from standard Ivy library (ivy/include/1.7/order.ivy):
+
+include order
+
+# Create types `count_t`, `time_t`, and `seqnum_t`, which are both unbounded
+# sequences:
+
 instance count_t : unbounded_sequence
+instance seqnum_t : unbounded_sequence
 instance time_t : unbounded_sequence
 
-# whether the transfer has been refunded:
-individual refunded:bool
+# State and actions pertaining to Stellar
+# ---------------------------------------
+
+# Whether the transfer has been refunded or not:
+
+var refunded:bool
+
+# The duration of the withdraw period (which starts at time 0):
 
 parameter end_withdraw_period:time_t
 axiom end_withdraw_period > 0
 
-instance seqnum_t : unbounded_sequence
+# The type of withdraw transactions from the bridge to the receiving account:
 
-# a withdraw transaction from the bridge to the receiving account:
 object withdraw_t = {
     type this = struct {
         max_time : time_t,
@@ -25,13 +42,24 @@ object withdraw_t = {
     }
 }
 
-# pending transactions:
+# The set of pending transactions:
+
 relation pending(TX:withdraw_t)
-var t:time_t # last ledger close time on Stellar.
-# executed transactions and their execution time:
+
+# The last ledger close time on Stellar:
+
+var t:time_t
+
+# History of executed transactions (by ledger close time):
+
 relation executed(T:time_t, TX:withdraw_t)
-var seqnum:seqnum_t # current seqnum of receiving account.
-# changes of sequence number of the receiving account:
+
+# Current sequence number of the receiving account:
+
+var seqnum:seqnum_t
+
+# History of the sequence number of the receiving account (by ledger close time):
+
 relation seqnums(T:time_t, S:seqnum_t)
 
 after init {
@@ -43,34 +71,45 @@ after init {
     refunded := false;
 }
 
+# A withdrawal is valid and can be executed when its sequence number is equal
+# to the sequence number of the receiving account and its `max_time` is greater
+# or equal to the current time. TODO: it should be sequence number + 1.
+
 relation valid(TX:withdraw_t, T:time_t)
 definition valid(TX:withdraw_t, T:time_t) =
     seqnum = withdraw_t.seqnum(TX) & T <= withdraw_t.max_time(TX)
 
-# execute a transaction at time new_t
-# for now, we execute only one transaction at a time
-export action exec(new_t:time_t, tx:withdraw_t) = {
-    require new_t > t;
-    require pending(tx) & valid(tx, new_t);
-    executed(new_t, tx) := true;
-    seqnum := seqnum.next;
-    seqnums(new_t, seqnum) := true;
-    t := new_t;
-}
+# Execute a new ledger potentially containing a withdraw transaction. Note that
+# the sequence number of the receiving account can increase due to other
+# transactions.
 
-export action ledger_without_withdraw(new_t:time_t, s:seqnum_t) = {
+export action new_ledger(new_t:time_t, s:seqnum_t, include_withdrawal:bool) = {
     require new_t > t;
     require s >= seqnum;
-    t := new_t;
+    if include_withdrawal {
+        local tx:withdraw_t {
+            require pending(tx) & valid(tx, new_t);
+            executed(new_t, tx) := true;
+            require s > seqnum;
+        }
+    };
     seqnum := s;
+    t := new_t;
     seqnums(t, seqnum) := true;
 }
 
-# now the bridge:
+# State and actions pertaining to the bridge
+# ------------------------------------------
 
-# ledger time as seen by the bridge:
+# The bridge processes Stellar ledgers but may be late. It can also lose its
+# state and restart.
+
+# Ledger time as seen by the bridge:
+
 var bridge_ledger: time_t
-# seqnum of the receiving account as seen by the bridge:
+
+# Sequence number of the receiving account as seen by the bridge:
+
 var bridge_seqnum: seqnum_t
 
 after init {
@@ -78,7 +117,9 @@ after init {
     bridge_seqnum := 0;
 }
 
-# process ledgers up to l:
+# The brigde processes ledgers up to `l`.
+# Setting `bridge_seqnum` is a little tricky. We need to find the last time `t_s` the sequence number `s` of the receiving account was updated.
+
 export action process_ledgers(l:time_t) = {
     require l <= t;
     bridge_ledger := l;
@@ -90,7 +131,19 @@ export action process_ledgers(l:time_t) = {
     }
 }
 
-# sign a withdraw transaction
+# The bridge loses its state and restarts:
+
+export action restart = {
+    bridge_ledger := 0;
+    bridge_seqnum := 0
+}
+
+# The bridge signs a withdraw transaction if a) it has not been executed
+# according to the bridge's view of Stellar (so, before or in ledger
+# `bridge_ledger`), b) `max_time` is before the end of the withdraw period, and
+# c) the sequence number of the transaction is equal to the receiving account's
+# sequence number. TODO: it should be the sucessor of that.
+
 export action sign_withdraw(tx:withdraw_t) = {
     require T <= bridge_ledger -> ~executed(T, TX);
     require tx.max_time <= end_withdraw_period;
@@ -98,9 +151,10 @@ export action sign_withdraw(tx:withdraw_t) = {
     pending(tx) := true;
 }
 
+# The bridge refunds a transaction if we are past the end of the withdraw period (as measure by Stellar ledger time as seen by the bridge) and no withdraw transaction has been executed.
+
 export action refund = {
-    require t > end_withdraw_period;
-    require bridge_ledger >= t;
+    require bridge_ledger > end_withdraw_period;
     require T <= bridge_ledger -> ~executed(T, TX);
     refunded := true;
 }
@@ -138,6 +192,10 @@ invariant seqnums(T,S1) & seqnums(T,S2) -> S1 = S2
 invariant pending(TX) -> withdraw_t.max_time(TX) <= end_withdraw_period
 # refunds only happend after the withdraw period:
 invariant refunded -> t > end_withdraw_period
+# the bridge is always behind or in sync:
+invariant bridge_ledger <= t
+# no withdrawals are executed after the end of the withdraw period:
+invariant executed(T,TX) -> T <= end_withdraw_period
 
 # A withdrawal can be executed on if it has the same sequence number as the receiving account, executing it increases the sequence number of the receiving account, and account sequence numbers only increase. So:
 invariant executed(T,TX) & seqnums(T,S) -> withdraw_t.seqnum(TX) < S
@@ -146,18 +204,17 @@ invariant executed(T1,TX) & seqnums(T2,S) & T1 < T2 -> withdraw_t.seqnum(TX) < S
 
 ## Invariants that hold but are not needed to prove the main invariants:
 
-invariant seqnums(T,S) -> S <= seqnum
-invariant exists T . seqnums(T, bridge_seqnum)
-invariant bridge_ledger <= t
-invariant seqnums(T,S) & T <= bridge_ledger -> S <= bridge_seqnum
-invariant executed(T,TX) -> withdraw_t.seqnum(TX) < seqnum
-invariant executed(T,TX) -> pending(TX)
-invariant executed(T,TX) -> T <= end_withdraw_period
-invariant executed(T,TX) -> exists S . seqnums(T,S)
-invariant executed(T,TX) & T <= bridge_ledger -> withdraw_t.seqnum(TX) < bridge_seqnum
-#at most one pending withdraw is valid:
-invariant pending(TX1) & pending(TX2) & withdraw_t.seqnum(TX1) ~= withdraw_t.seqnum(TX2) & valid(TX1, t) -> ~valid(TX2, t)
-invariant pending(TX1) & valid(TX1, t) & pending(TX2) & valid(TX2, t) ->
-    withdraw_t.seqnum(TX1) = withdraw_t.seqnum(TX2)
-invariant executed(T1,TX1) & executed(T2,TX2) & T1 < T2 ->
-    withdraw_t.seqnum(TX1) < withdraw_t.seqnum(TX2)
+# invariant seqnums(T,S) -> S <= seqnum
+# invariant exists T . seqnums(T, bridge_seqnum)
+# invariant bridge_ledger <= t
+# invariant seqnums(T,S) & T <= bridge_ledger -> S <= bridge_seqnum
+# invariant executed(T,TX) -> withdraw_t.seqnum(TX) < seqnum
+# invariant executed(T,TX) -> T <= end_withdraw_period
+# invariant executed(T,TX) -> exists S . seqnums(T,S)
+# invariant executed(T,TX) & T <= bridge_ledger -> withdraw_t.seqnum(TX) < bridge_seqnum
+# #at most one pending withdraw is valid:
+# invariant pending(TX1) & pending(TX2) & withdraw_t.seqnum(TX1) ~= withdraw_t.seqnum(TX2) & valid(TX1, t) -> ~valid(TX2, t)
+# invariant pending(TX1) & valid(TX1, t) & pending(TX2) & valid(TX2, t) ->
+    # withdraw_t.seqnum(TX1) = withdraw_t.seqnum(TX2)
+# invariant executed(T1,TX1) & executed(T2,TX2) & T1 < T2 ->
+    # withdraw_t.seqnum(TX1) < withdraw_t.seqnum(TX2)
