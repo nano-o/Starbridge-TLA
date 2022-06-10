@@ -110,11 +110,11 @@ var bridge_ledger: time_t
 
 # Sequence number of the receiving account as seen by the bridge:
 
-var bridge_seqnum: seqnum_t
+var bridge_receiving_seqnum: seqnum_t
 
 after init {
     bridge_ledger := 0;
-    bridge_seqnum := 0;
+    bridge_receiving_seqnum := 0;
 }
 
 # The brigde processes ledgers up to `l`.
@@ -124,7 +124,7 @@ export action process_ledgers(l:time_t) = {
     bridge_ledger := l;
     local s:seqnum_t { # the seqnum of the receiving account as of ledger l
         assume seqnums(l, s);
-        bridge_seqnum := s;
+        bridge_receiving_seqnum := s;
     }
 }
 
@@ -132,7 +132,7 @@ export action process_ledgers(l:time_t) = {
 
 export action restart = {
     bridge_ledger := 0;
-    bridge_seqnum := 0
+    bridge_receiving_seqnum := 0
 }
 
 # The bridge signs a withdraw transaction if a) it has not been executed
@@ -144,7 +144,7 @@ export action restart = {
 export action sign_withdraw(tx:withdraw_t) = {
     require T <= bridge_ledger -> ~executed(T, TX);
     require tx.max_time <= end_withdraw_period;
-    require tx.seqnum = bridge_seqnum;
+    require tx.seqnum = bridge_receiving_seqnum;
     pending(tx) := true;
 }
 
@@ -201,9 +201,9 @@ invariant executed(T1,TX) & seqnums(T2,S) & T1 < T2 -> withdraw_t.seqnum(TX) < S
 # pending transactions have sequence numbers lower or equal to the current sequence number of the receiving account:
 invariant pending(TX) -> withdraw_t.seqnum(TX) <= seqnum
 # if a withdraw has been executed with a seqnum that the bridge has seen, then the bridge knows it's executed:
-invariant executed(T1,TX1) & withdraw_t.seqnum(TX1) < bridge_seqnum -> T1 <= bridge_ledger
+invariant executed(T1,TX1) & withdraw_t.seqnum(TX1) < bridge_receiving_seqnum -> T1 <= bridge_ledger
 # the bridge is in sync or late:
-invariant bridge_seqnum <= seqnum
+invariant bridge_receiving_seqnum <= seqnum
 # no seqnum is assigned in the future:
 invariant seqnums(T,S) -> T <= t
 # sequence numbers only grow:
